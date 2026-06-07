@@ -2,20 +2,41 @@ from __future__ import annotations
 
 import json
 import re
-from difflib import SequenceMatcher
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 
 def _extract_json_block(raw_text: str) -> str:
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if match:
-        return match.group(0)
-    stripped = raw_text.strip()
-    if stripped.startswith("{"):
-        return stripped
-    raise ValueError("payload sin estructura JSON")
+    start = raw_text.find("{")
+    if start == -1:
+        stripped = raw_text.strip()
+        if stripped.startswith("{"):
+            return stripped
+        raise ValueError("payload sin estructura JSON")
+
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(raw_text)):
+        char = raw_text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return raw_text[start : idx + 1]
+    return raw_text[start:].strip()
 
 
 def _repair_truncation(candidate: str) -> str:
@@ -56,6 +77,15 @@ def parse_with_layered_repair(raw_text: str, target_schema: type[BaseModel]) -> 
 
 
 def structural_delta_ratio(prev_state: dict[str, Any], new_state: dict[str, Any]) -> float:
-    prev_txt = json.dumps(prev_state, sort_keys=True, separators=(",", ":"))
-    new_txt = json.dumps(new_state, sort_keys=True, separators=(",", ":"))
-    return 1.0 - SequenceMatcher(None, prev_txt, new_txt).ratio()
+    if not prev_state and not new_state:
+        return 0.0
+
+    prev_items = {key: json.dumps(value, sort_keys=True, separators=(",", ":")) for key, value in prev_state.items()}
+    new_items = {key: json.dumps(value, sort_keys=True, separators=(",", ":")) for key, value in new_state.items()}
+
+    all_keys = set(prev_items) | set(new_items)
+    if not all_keys:
+        return 0.0
+
+    changed = sum(1 for key in all_keys if prev_items.get(key) != new_items.get(key))
+    return changed / len(all_keys)

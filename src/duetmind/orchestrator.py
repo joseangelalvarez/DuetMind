@@ -107,6 +107,7 @@ class Orchestrator:
                 b_msg = self.agent_b.generate(phase_id, iteration, a_msg.grafo_estado, user_intent)
 
             tokens_fase += a_msg.telemetria.tokens_consumidos + b_msg.telemetria.tokens_consumidos
+            a_graph_text = self._graph_text(a_msg.grafo_estado)
 
             timeout_or_oom = (
                 a_msg.telemetria.tiempo_ejecucion_ms > self.config.tmax_ms
@@ -117,11 +118,11 @@ class Orchestrator:
 
             integrity_ok = self.storage.verify_integrity(a_msg.grafo_estado)
 
-            current_tokens = set(self._graph_text(a_msg.grafo_estado).lower().split())
+            current_tokens = set(a_graph_text.lower().split())
             loop_jaccard = jaccard_similarity(current_tokens, prev_prev_tokens) if prev_prev_tokens else 0.0
             loop_flag = loop_jaccard > self.config.loop_jaccard_threshold and abs(last_score - 0.0) <= self.config.delta_score_epsilon
 
-            ds = cosine_distance_from_token_sets(self._graph_text(a_msg.grafo_estado), user_intent)
+            ds = cosine_distance_from_token_sets(a_graph_text, user_intent)
 
             collision = resolve_collision_priority(
                 CollisionInputs(

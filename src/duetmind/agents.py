@@ -29,6 +29,26 @@ class AgentAdapter(Protocol):
     ) -> CompactAgentMessage: ...
 
 
+def compact_graph_state(
+    prev_graph: dict[str, str],
+    phase_id: int,
+    iteration: int,
+    proposal_suffix: str,
+    agent_id: AgentId,
+    user_intent: str,
+) -> dict[str, str]:
+    prefix = f"phase_{phase_id}_iter_"
+    compacted = {
+        key: value
+        for key, value in prev_graph.items()
+        if key == "intent_anchor" or key.startswith(prefix)
+    }
+    compacted[f"phase_{phase_id}_iter_{iteration}"] = proposal_suffix
+    compacted[f"phase_{phase_id}_iter_{iteration}_{agent_id.value}"] = proposal_suffix
+    compacted["intent_anchor"] = user_intent
+    return compacted
+
+
 class MockAgentAdapter:
     def __init__(self, agent_id: AgentId, profile: AgentProfile) -> None:
         self.agent_id = agent_id
@@ -41,10 +61,14 @@ class MockAgentAdapter:
         prev_graph: dict[str, str],
         user_intent: str,
     ) -> CompactAgentMessage:
-        graph = dict(prev_graph)
-        graph[f"phase_{phase_id}_iter_{iteration}"] = self.profile.proposal_suffix
-        graph[f"phase_{phase_id}_iter_{iteration}_{self.agent_id.value}"] = self.profile.proposal_suffix
-        graph["intent_anchor"] = user_intent
+        graph = compact_graph_state(
+            prev_graph,
+            phase_id,
+            iteration,
+            self.profile.proposal_suffix,
+            self.agent_id,
+            user_intent,
+        )
         return CompactAgentMessage(
             fase_id=phase_id,
             iteracion=iteration,
@@ -91,7 +115,23 @@ class ProviderAgentAdapter:
         if message.emisor != self.agent_id:
             message.emisor = self.agent_id
         if not message.grafo_estado:
-            message.grafo_estado = dict(prev_graph)
+            message.grafo_estado = compact_graph_state(
+                prev_graph,
+                phase_id,
+                iteration,
+                self.profile.proposal_suffix,
+                self.agent_id,
+                user_intent,
+            )
+        else:
+            message.grafo_estado = compact_graph_state(
+                message.grafo_estado,
+                phase_id,
+                iteration,
+                self.profile.proposal_suffix,
+                self.agent_id,
+                user_intent,
+            )
         message.grafo_estado.setdefault("intent_anchor", user_intent)
         return message
 

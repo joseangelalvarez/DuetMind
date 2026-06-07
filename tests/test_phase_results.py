@@ -51,6 +51,7 @@ class TestPhaseResults(unittest.TestCase):
             self.assertIn("telemetry", bundle)
             self.assertIn("snapshots", bundle)
             self.assertGreaterEqual(len(bundle["snapshots"]), 1)
+            storage.close()
         finally:
             if os.path.exists(db_name):
                 os.remove(db_name)

@@ -18,6 +18,7 @@ class TestStorage(unittest.TestCase):
             block = storage.append_ledger(1, manifest)
             self.assertTrue(block.hash_manifiesto)
             self.assertTrue(storage.verify_integrity(manifest))
+            storage.close()
 
     def test_integrity_rejects_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -28,6 +29,7 @@ class TestStorage(unittest.TestCase):
 
             mutated = {"component_a": "value2"}
             self.assertFalse(storage.verify_integrity(mutated))
+            storage.close()
 
 
 if __name__ == "__main__":

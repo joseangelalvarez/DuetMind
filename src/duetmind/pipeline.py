@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Callable
 
 from duetmind.agents import AgentAdapter, build_default_agents, build_provider_agents
@@ -72,11 +73,14 @@ class PipelineRunner:
         results: list[tuple[PhaseSpec, EvalResult]] = []
         for phase in self.schedule:
             agent_a, agent_b = self.agent_resolver(phase)
-            self.orchestrator.agent_a = agent_a
-            self.orchestrator.agent_b = agent_b
-            self.orchestrator.config.imax = phase.max_iterations
+            phase_orchestrator = Orchestrator(
+                self.orchestrator.storage,
+                config=replace(self.orchestrator.config, imax=phase.max_iterations),
+                agent_a=agent_a,
+                agent_b=agent_b,
+            )
             phase_prompt = self.prompt_library.render(phase.phase_id, intent)
-            result = self.orchestrator.run_phase(phase.phase_id, phase_prompt)
+            result = phase_orchestrator.run_phase(phase.phase_id, phase_prompt)
             results.append((phase, result))
             self.orchestrator.storage.save_phase_result(
                 phase.phase_id,

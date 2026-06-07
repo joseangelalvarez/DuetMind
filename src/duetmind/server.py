@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from functools import lru_cache
 from urllib.parse import parse_qs, urlparse
 
 from duetmind.analysis import assess_go_no_go
@@ -12,6 +13,12 @@ from duetmind.storage import Storage
 
 
 def build_audit_handler(storage: Storage, api_key: str | None = None) -> type[BaseHTTPRequestHandler]:
+    @lru_cache(maxsize=2)
+    def _build_agents(agent_mode: str):
+        if agent_mode == "provider":
+            return build_provider_agents()
+        return build_default_agents()
+
     def _build_schedule(payload: dict[str, object], default_agent_mode: str) -> list[PhaseSpec] | None:
         raw_schedule = payload.get("schedule")
         if raw_schedule is None:
@@ -43,7 +50,7 @@ def build_audit_handler(storage: Storage, api_key: str | None = None) -> type[Ba
             return header_key == api_key
 
         def _write_json(self, status_code: int, payload: object) -> None:
-            body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+            body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -116,10 +123,7 @@ def build_audit_handler(storage: Storage, api_key: str | None = None) -> type[Ba
             payload = json.loads(body or "{}")
 
             agent_mode = payload.get("agent_mode", "mock")
-            if agent_mode == "provider":
-                agent_a, agent_b = build_provider_agents()
-            else:
-                agent_a, agent_b = build_default_agents()
+            agent_a, agent_b = _build_agents(str(agent_mode))
 
             orch = Orchestrator(storage, agent_a=agent_a, agent_b=agent_b)
 

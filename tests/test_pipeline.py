@@ -31,6 +31,7 @@ class TestPipeline(unittest.TestCase):
 
             self.assertGreaterEqual(len(result.phase_results), 1)
             self.assertTrue(result.final_signal)
+            storage.close()
 
 
 if __name__ == "__main__":

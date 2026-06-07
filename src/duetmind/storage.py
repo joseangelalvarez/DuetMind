@@ -5,8 +5,10 @@ import json
 import sqlite3
 import time
 import uuid
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock, local
 from typing import Dict
 
 
@@ -23,10 +25,53 @@ class LedgerBlock:
 class Storage:
     def __init__(self, db_path: str | Path = "duetmind.db") -> None:
         self.db_path = str(db_path)
+        self._thread_local = local()
+        self._lock = RLock()
+        self._ledger_cache: Dict[str, str] = {}
+        self._finalizer = weakref.finalize(self, Storage._finalize_connection, self._thread_local)
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+        conn = getattr(self._thread_local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            self._thread_local.conn = conn
+        return conn
+
+    @staticmethod
+    def _finalize_connection(thread_local: local) -> None:
+        conn = getattr(thread_local, "conn", None)
+        if conn is not None:
+            conn.close()
+            thread_local.conn = None
+
+    def close(self) -> None:
+        with self._lock:
+            Storage._finalize_connection(self._thread_local)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _execute(self, sql: str, params: tuple[object, ...] = ()) -> sqlite3.Cursor:
+        with self._lock:
+            conn = self._connect()
+            cursor = conn.execute(sql, params)
+            conn.commit()
+            return cursor
+
+    def _fetchall(self, sql: str, params: tuple[object, ...] = ()) -> list[tuple[object, ...]]:
+        conn = self._connect()
+        return conn.execute(sql, params).fetchall()
+
+    def _fetchone(self, sql: str, params: tuple[object, ...] = ()) -> tuple[object, ...] | None:
+        conn = self._connect()
+        return conn.execute(sql, params).fetchone()
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -78,26 +123,30 @@ class Storage:
                 )
                 """
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_phase_id ON telemetry(phase_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_created_at ON telemetry(created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_phase_id ON ledger(phase_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_created_at ON ledger(created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_environment ON phase_results(environment)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_created_at ON phase_results(created_at)")
+            conn.commit()
 
     def get_snapshot(self, phase_id: int) -> dict[str, str] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT manifest_json FROM snapshots WHERE phase_id = ?", (phase_id,)
-            ).fetchone()
+        row = self._fetchone("SELECT manifest_json FROM snapshots WHERE phase_id = ?", (phase_id,))
         return json.loads(row[0]) if row else None
 
     def save_snapshot(self, phase_id: int, manifest: dict[str, str]) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO snapshots(phase_id, manifest_json, created_at)
-                VALUES(?, ?, ?)
-                ON CONFLICT(phase_id) DO UPDATE SET
-                    manifest_json = excluded.manifest_json,
-                    created_at = excluded.created_at
-                """,
-                (phase_id, json.dumps(manifest, sort_keys=True), time.time()),
-            )
+        self._execute(
+            """
+            INSERT INTO snapshots(phase_id, manifest_json, created_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(phase_id) DO UPDATE SET
+                manifest_json = excluded.manifest_json,
+                created_at = excluded.created_at
+            """,
+            (phase_id, json.dumps(manifest, sort_keys=True), time.time()),
+        )
 
     def append_telemetry(
         self,
@@ -107,14 +156,13 @@ class Storage:
         score: float | None,
         reason: str,
     ) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO telemetry(phase_id, iteration, state, score, reason, created_at)
-                VALUES(?, ?, ?, ?, ?, ?)
-                """,
-                (phase_id, iteration, state, score, reason, time.time()),
-            )
+        self._execute(
+            """
+            INSERT INTO telemetry(phase_id, iteration, state, score, reason, created_at)
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (phase_id, iteration, state, score, reason, time.time()),
+        )
 
     def save_phase_result(
         self,
@@ -126,33 +174,32 @@ class Storage:
         score: float,
         reason: str,
     ) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO phase_results(
-                    phase_id, phase_name, environment, model_tier,
-                    signal, score, reason, created_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(phase_id) DO UPDATE SET
-                    phase_name = excluded.phase_name,
-                    environment = excluded.environment,
-                    model_tier = excluded.model_tier,
-                    signal = excluded.signal,
-                    score = excluded.score,
-                    reason = excluded.reason,
-                    created_at = excluded.created_at
-                """,
-                (
-                    phase_id,
-                    phase_name,
-                    environment,
-                    model_tier,
-                    signal,
-                    score,
-                    reason,
-                    time.time(),
-                ),
-            )
+        self._execute(
+            """
+            INSERT INTO phase_results(
+                phase_id, phase_name, environment, model_tier,
+                signal, score, reason, created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(phase_id) DO UPDATE SET
+                phase_name = excluded.phase_name,
+                environment = excluded.environment,
+                model_tier = excluded.model_tier,
+                signal = excluded.signal,
+                score = excluded.score,
+                reason = excluded.reason,
+                created_at = excluded.created_at
+            """,
+            (
+                phase_id,
+                phase_name,
+                environment,
+                model_tier,
+                signal,
+                score,
+                reason,
+                time.time(),
+            ),
+        )
 
     def list_phase_results(
         self,
@@ -169,16 +216,15 @@ class Storage:
             params.append(environment)
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT phase_id, phase_name, environment, model_tier, signal, score, reason
-                FROM phase_results
-                {where_sql}
-                ORDER BY phase_id
-                """,
-                params,
-            ).fetchall()
+        rows = self._fetchall(
+            f"""
+            SELECT phase_id, phase_name, environment, model_tier, signal, score, reason
+            FROM phase_results
+            {where_sql}
+            ORDER BY phase_id
+            """,
+            tuple(params),
+        )
         return [
             {
                 "phase_id": row[0],
@@ -210,16 +256,15 @@ class Storage:
             params.append(phase_id)
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT phase_id, manifest_json, created_at
-                FROM snapshots
-                {where_sql}
-                ORDER BY phase_id
-                """,
-                params,
-            ).fetchall()
+        rows = self._fetchall(
+            f"""
+            SELECT phase_id, manifest_json, created_at
+            FROM snapshots
+            {where_sql}
+            ORDER BY phase_id
+            """,
+            tuple(params),
+        )
         return [
             {
                 "phase_id": row[0],
@@ -240,17 +285,16 @@ class Storage:
             params.append(phase_id)
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT phase_id, state, COUNT(*) AS event_count, AVG(score) AS avg_score
-                FROM telemetry
-                {where_sql}
-                GROUP BY phase_id, state
-                ORDER BY phase_id, state
-                """,
-                params,
-            ).fetchall()
+        rows = self._fetchall(
+            f"""
+            SELECT phase_id, state, COUNT(*) AS event_count, AVG(score) AS avg_score
+            FROM telemetry
+            {where_sql}
+            GROUP BY phase_id, state
+            ORDER BY phase_id, state
+            """,
+            tuple(params),
+        )
         return [
             {
                 "phase_id": row[0],
@@ -269,16 +313,15 @@ class Storage:
             params.append(phase_id)
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT id_bloque, phase_id, hash_manifiesto, hash_anterior, tabla_dependencias_json, created_at
-                FROM ledger
-                {where_sql}
-                ORDER BY created_at
-                """,
-                params,
-            ).fetchall()
+        rows = self._fetchall(
+            f"""
+            SELECT id_bloque, phase_id, hash_manifiesto, hash_anterior, tabla_dependencias_json, created_at
+            FROM ledger
+            {where_sql}
+            ORDER BY created_at
+            """,
+            tuple(params),
+        )
         return [
             {
                 "id_bloque": row[0],
@@ -307,16 +350,14 @@ class Storage:
             json.dump(bundle, handle, indent=2, sort_keys=True)
 
     def _get_last_ledger_hash(self) -> str:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT hash_manifiesto FROM ledger ORDER BY created_at DESC LIMIT 1"
-            ).fetchone()
+        row = self._fetchone("SELECT hash_manifiesto FROM ledger ORDER BY created_at DESC LIMIT 1")
         return row[0] if row else "0" * 64
 
     def append_ledger(self, phase_id: int, manifest: dict[str, str]) -> LedgerBlock:
         raw = json.dumps(manifest, sort_keys=True)
         hash_actual = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-        hash_anterior = self._get_last_ledger_hash()
+        with self._lock:
+            hash_anterior = self._get_last_ledger_hash()
 
         deps: Dict[str, str] = {
             comp_id: hashlib.sha256(str(comp_data).encode("utf-8")).hexdigest()
@@ -332,32 +373,32 @@ class Storage:
             tabla_dependencias=deps,
         )
 
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO ledger(
-                    id_bloque, phase_id, hash_manifiesto, hash_anterior,
-                    tabla_dependencias_json, created_at
-                ) VALUES(?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    block.id_bloque,
-                    block.fase_id,
-                    block.hash_manifiesto,
-                    block.hash_anterior,
-                    json.dumps(block.tabla_dependencias, sort_keys=True),
-                    block.timestamp,
-                ),
-            )
+        self._execute(
+            """
+            INSERT INTO ledger(
+                id_bloque, phase_id, hash_manifiesto, hash_anterior,
+                tabla_dependencias_json, created_at
+            ) VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (
+                block.id_bloque,
+                block.fase_id,
+                block.hash_manifiesto,
+                block.hash_anterior,
+                json.dumps(block.tabla_dependencias, sort_keys=True),
+                block.timestamp,
+            ),
+        )
+        self._ledger_cache.update(block.tabla_dependencias)
         return block
 
     def verify_integrity(self, manifest_propuesto: dict[str, str]) -> bool:
-        with self._connect() as conn:
-            rows = conn.execute("SELECT tabla_dependencias_json FROM ledger").fetchall()
-
-        consolidado: Dict[str, str] = {}
-        for row in rows:
-            consolidado.update(json.loads(row[0]))
+        consolidado = dict(self._ledger_cache)
+        if not consolidado:
+            rows = self._fetchall("SELECT tabla_dependencias_json FROM ledger")
+            for row in rows:
+                consolidado.update(json.loads(row[0]))
+            self._ledger_cache = consolidado
 
         for comp_id, comp_data in manifest_propuesto.items():
             if comp_id in consolidado:

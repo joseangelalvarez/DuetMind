@@ -119,6 +119,7 @@ class TestServer(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
+                storage.close()
 
     def test_api_key_protection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,6 +150,7 @@ class TestServer(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
+                storage.close()
 
 
 if __name__ == "__main__":
