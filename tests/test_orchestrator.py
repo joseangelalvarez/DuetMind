@@ -1,10 +1,13 @@
 import tempfile
+import time
 import unittest
 from collections import deque
 from pathlib import Path
 
-from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, TelemetryCycle
+from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, EvalResult, TelemetryCycle
+from duetmind.moderator import HeuristicModerator, ProviderModerator
 from duetmind.orchestrator import Orchestrator, RuntimeConfig
+from duetmind.providers import ProviderResponse
 from duetmind.scoring import financial_discount
 from duetmind.storage import Storage
 
@@ -12,6 +15,42 @@ from duetmind.storage import Storage
 class FailingAgent:
     def generate(self, phase_id: int, iteration: int, prev_graph: dict[str, str], user_intent: str):
         raise RuntimeError("simulated_provider_failure")
+
+
+class SlowAgent:
+    def generate(self, phase_id: int, iteration: int, prev_graph: dict[str, str], user_intent: str):
+        time.sleep(0.05)
+        return build_message(agent_id=AgentId.A, graph={"semantic": "slow"})
+
+
+class FixedSemanticAgent:
+    def __init__(self, agent_id: AgentId, semantic: str) -> None:
+        self.agent_id = agent_id
+        self.semantic = semantic
+
+    def generate(self, phase_id: int, iteration: int, prev_graph: dict[str, str], user_intent: str):
+        return build_message(agent_id=self.agent_id, graph={"semantic": self.semantic})
+
+
+class CustomModerator:
+    def __init__(self) -> None:
+        self.called = False
+
+    def arbitrate(self, a, b, phase_id, iteration, tokens_fase, token_budget):
+        self.called = True
+        return EvalResult(score=9.0, signal=ControlSignal.FREEZE_ADVANCE, reason="custom_moderator", bloqueantes=0)
+
+
+class CaptureProvider:
+    def __init__(self) -> None:
+        self.last_prompt = ""
+
+    def complete(self, request):
+        self.last_prompt = request.prompt_text
+        return ProviderResponse(
+            raw_text='{"score": 6.5, "signal": "CONVERGE_CONDICIONADO", "reason": "provider_moderator", "bloqueantes": 0}',
+            provider_name="capture",
+        )
 
 
 def build_message(
@@ -47,6 +86,67 @@ def build_message(
 
 
 class TestOrchestrator(unittest.TestCase):
+    def test_heuristic_moderator_produces_valid_eval_result(self) -> None:
+        moderator = HeuristicModerator()
+        a = build_message(agent_id=AgentId.A, graph={"semantic": "same"})
+        b = build_message(agent_id=AgentId.B, graph={"semantic": "same"})
+
+        result = moderator.arbitrate(a, b, phase_id=1, iteration=1, tokens_fase=20, token_budget=100)
+
+        self.assertGreaterEqual(result.score, 0.0)
+        self.assertIn(
+            result.signal,
+            {ControlSignal.FREEZE_ADVANCE, ControlSignal.CONVERGE_CONDITIONAL, ControlSignal.ROLLBACK},
+        )
+
+    def test_custom_moderator_injected_via_constructor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            moderator = CustomModerator()
+            orch = Orchestrator(
+                storage,
+                agent_a=FixedSemanticAgent(AgentId.A, "demo"),
+                agent_b=FixedSemanticAgent(AgentId.B, "demo"),
+                moderator=moderator,
+            )
+            try:
+                result = orch.run_phase(1, "demo")
+
+                self.assertTrue(moderator.called)
+                self.assertEqual(result.reason, "custom_moderator")
+            finally:
+                storage.close()
+
+    def test_provider_moderator_receives_both_agent_messages(self) -> None:
+        provider = CaptureProvider()
+        moderator = ProviderModerator(provider)
+        a = build_message(agent_id=AgentId.A, graph={"semantic": "alpha"})
+        b = build_message(agent_id=AgentId.B, graph={"semantic": "beta"})
+
+        result = moderator.arbitrate(a, b, phase_id=1, iteration=1, tokens_fase=20, token_budget=100)
+
+        self.assertEqual(result.reason, "provider_moderator")
+        self.assertIn("alpha", provider.last_prompt)
+        self.assertIn("beta", provider.last_prompt)
+
+    def test_timeout_real_marks_timeout_flag_and_escalates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(
+                storage,
+                config=RuntimeConfig(tmax_ms=10),
+                agent_a=SlowAgent(),
+                agent_b=SlowAgent(),
+            )
+            try:
+                result = orch.run_phase(1, "demo")
+
+                self.assertEqual(result.signal, ControlSignal.CLOUD_ESC)
+                summary = storage.telemetry_summary(phase_id=1)
+                self.assertTrue(any(row["state"] == "AGENT_TIMEOUT" for row in summary))
+            finally:
+                storage.close()
+
     def test_no_loop_flag_in_iteration_1(self) -> None:
         loop_flag = Orchestrator._loop_detected(
             current_tokens={"alpha"},

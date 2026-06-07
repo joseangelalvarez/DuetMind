@@ -4,5 +4,6 @@ __all__ = [
     "middleware",
     "storage",
     "scoring",
+    "moderator",
     "orchestrator",
 ]

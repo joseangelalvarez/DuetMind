@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from dataclasses import dataclass
 
 from duetmind.agents import AgentAdapter, build_default_agents
 from duetmind.fsm import CollisionInputs, FsmEvent, FsmState, resolve_collision_priority, resolve_phase_transition
 from duetmind.middleware import structural_delta_ratio
+from duetmind.moderator import HeuristicModerator, ModeratorAdapter
 from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, EvalResult, TelemetryCycle
 from duetmind.scoring import compute_score, cosine_distance_from_token_sets, jaccard_similarity, jensen_shannon_distance
 from duetmind.storage import Storage
@@ -33,12 +35,17 @@ class Orchestrator:
         config: RuntimeConfig | None = None,
         agent_a: AgentAdapter | None = None,
         agent_b: AgentAdapter | None = None,
+        moderator: ModeratorAdapter | None = None,
     ) -> None:
         self.storage = storage
         self.config = config or RuntimeConfig()
         default_a, default_b = build_default_agents()
         self.agent_a = agent_a or default_a
         self.agent_b = agent_b or default_b
+        self.moderator = moderator or HeuristicModerator(
+            score_freeze_threshold=self.config.score_freeze_threshold,
+            score_converge_threshold=self.config.score_converge_threshold,
+        )
 
     @staticmethod
     def _graph_text(graph: dict[str, str]) -> str:
@@ -85,16 +92,23 @@ class Orchestrator:
         )
 
     @staticmethod
-    def _make_sentinel_message(phase_id: int, iteration: int, agent_id: AgentId) -> CompactAgentMessage:
+    def _make_sentinel_message(
+        phase_id: int,
+        iteration: int,
+        agent_id: AgentId,
+        *,
+        sentinel_reason: str = "agent_exception",
+        timeout_flag: bool = False,
+    ) -> CompactAgentMessage:
         return CompactAgentMessage(
             fase_id=phase_id,
             iteracion=iteration,
             emisor=agent_id,
-            grafo_estado={"sentinel": "agent_exception"},
+            grafo_estado={"sentinel": sentinel_reason},
             alertas=[
                 DefensiveAlert(
                     componente_id="agent_runtime",
-                    invariante_violada="agent_exception",
+                    invariante_violada=sentinel_reason,
                     gravedad_score=3,
                     es_bloqueante=True,
                 )
@@ -104,7 +118,7 @@ class Orchestrator:
                 vram_actual_gb=0.0,
                 tiempo_ejecucion_ms=0,
                 tokens_consumidos=0,
-                timeout_flag=False,
+                timeout_flag=timeout_flag,
                 oom_flag=False,
             ),
         )
@@ -118,8 +132,26 @@ class Orchestrator:
         user_intent: str,
         agent_id: AgentId,
     ) -> CompactAgentMessage:
+        async def _run_generate() -> CompactAgentMessage:
+            return await asyncio.to_thread(agent.generate, phase_id, iteration, prev_graph, user_intent)
+
         try:
-            return agent.generate(phase_id, iteration, prev_graph, user_intent)
+            return asyncio.run(asyncio.wait_for(_run_generate(), timeout=self.config.tmax_ms / 1000.0))
+        except (asyncio.TimeoutError, TimeoutError):
+            self.storage.append_telemetry(
+                phase_id,
+                iteration,
+                "AGENT_TIMEOUT",
+                None,
+                "provider_timeout",
+            )
+            return self._make_sentinel_message(
+                phase_id,
+                iteration,
+                agent_id,
+                sentinel_reason="agent_timeout",
+                timeout_flag=True,
+            )
         except Exception as exc:  # noqa: BLE001 - guardrail against infra failures
             self.storage.append_telemetry(
                 phase_id,
@@ -149,31 +181,14 @@ class Orchestrator:
                 reason="short_circuit_loop_flag",
                 bloqueantes=1,
             )
-
-        agreement = max(0.0, 1.0 - eval_input.jsd)
-        stability = max(
-            0.0,
-            1.0 - structural_delta_ratio(eval_input.a_msg.grafo_estado, eval_input.b_msg.grafo_estado),
-        )
-        risk, blocking_alerts = self._risk_from_alerts(eval_input.a_msg, eval_input.b_msg)
-        score = compute_score(
-            agreement,
-            stability,
-            risk,
-            eval_input.a_msg.confianza,
-            eval_input.b_msg.confianza,
+        return self.moderator.arbitrate(
+            eval_input.a_msg,
+            eval_input.b_msg,
+            eval_input.a_msg.fase_id,
+            eval_input.a_msg.iteracion,
             eval_input.tokens_fase,
             eval_input.presupuesto_tokens_fase,
         )
-
-        if score >= self.config.score_freeze_threshold:
-            signal = ControlSignal.FREEZE_ADVANCE
-        elif score >= self.config.score_converge_threshold:
-            signal = ControlSignal.CONVERGE_CONDITIONAL
-        else:
-            signal = ControlSignal.ROLLBACK
-
-        return EvalResult(score=score, signal=signal, reason="score_eval", bloqueantes=blocking_alerts)
 
     @staticmethod
     def _loop_detected(
@@ -261,6 +276,8 @@ class Orchestrator:
             timeout_or_oom = (
                 a_msg.telemetria.tiempo_ejecucion_ms > self.config.tmax_ms
                 or b_msg.telemetria.tiempo_ejecucion_ms > self.config.tmax_ms
+                or a_msg.telemetria.timeout_flag
+                or b_msg.telemetria.timeout_flag
                 or a_msg.telemetria.oom_flag
                 or b_msg.telemetria.oom_flag
             )
