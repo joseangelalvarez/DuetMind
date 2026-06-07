@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from duetmind.agents import AgentAdapter, build_default_agents
 from duetmind.fsm import CollisionInputs, FsmState, resolve_collision_priority
 from duetmind.middleware import structural_delta_ratio
-from duetmind.models import CompactAgentMessage, ControlSignal, EvalResult
+from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalResult, TelemetryCycle
 from duetmind.scoring import compute_score, cosine_distance_from_token_sets, jaccard_similarity
 from duetmind.storage import Storage
 
@@ -39,6 +39,52 @@ class Orchestrator:
     def _graph_text(graph: dict[str, str]) -> str:
         return " ".join(f"{k}={v}" for k, v in sorted(graph.items()))
 
+    @staticmethod
+    def _make_sentinel_message(phase_id: int, iteration: int, agent_id: AgentId) -> CompactAgentMessage:
+        return CompactAgentMessage(
+            fase_id=phase_id,
+            iteracion=iteration,
+            emisor=agent_id,
+            grafo_estado={"sentinel": "agent_exception"},
+            alertas=[
+                DefensiveAlert(
+                    componente_id="agent_runtime",
+                    invariante_violada="agent_exception",
+                    gravedad_score=3,
+                    es_bloqueante=True,
+                )
+            ],
+            confianza=0.0,
+            telemetria=TelemetryCycle(
+                vram_actual_gb=0.0,
+                tiempo_ejecucion_ms=0,
+                tokens_consumidos=0,
+                timeout_flag=False,
+                oom_flag=False,
+            ),
+        )
+
+    def _safe_generate(
+        self,
+        agent: AgentAdapter,
+        phase_id: int,
+        iteration: int,
+        prev_graph: dict[str, str],
+        user_intent: str,
+        agent_id: AgentId,
+    ) -> CompactAgentMessage:
+        try:
+            return agent.generate(phase_id, iteration, prev_graph, user_intent)
+        except Exception as exc:  # noqa: BLE001 - guardrail against infra failures
+            self.storage.append_telemetry(
+                phase_id,
+                iteration,
+                "AGENT_EXCEPTION",
+                None,
+                str(exc)[:256],
+            )
+            return self._make_sentinel_message(phase_id, iteration, agent_id)
+
     def _evaluate(
         self,
         a: CompactAgentMessage,
@@ -61,6 +107,15 @@ class Orchestrator:
                 signal=ControlSignal.ABORT,
                 reason="short_circuit_loop_flag",
                 bloqueantes=1,
+            )
+
+        blocking_alerts = sum(1 for alert in (*a.alertas, *b.alertas) if alert.es_bloqueante)
+        if blocking_alerts > 0:
+            return EvalResult(
+                score=0.0,
+                signal=ControlSignal.ROLLBACK,
+                reason="blocking_alert",
+                bloqueantes=blocking_alerts,
             )
 
         agreement = 1.0
@@ -98,13 +153,34 @@ class Orchestrator:
 
         for iteration in range(1, self.config.imax + 1):
             state = FsmState.DEBATE
-            a_msg = self.agent_a.generate(phase_id, iteration, prev_graph, user_intent)
+            a_msg = self._safe_generate(
+                self.agent_a,
+                phase_id,
+                iteration,
+                prev_graph,
+                user_intent,
+                AgentId.A,
+            )
 
             delta = structural_delta_ratio(prev_graph, a_msg.grafo_estado)
             if delta < self.config.semantic_delta_threshold:
-                b_msg = self.agent_b.generate(phase_id, iteration, prev_graph, user_intent)
+                b_msg = self._safe_generate(
+                    self.agent_b,
+                    phase_id,
+                    iteration,
+                    prev_graph,
+                    user_intent,
+                    AgentId.B,
+                )
             else:
-                b_msg = self.agent_b.generate(phase_id, iteration, a_msg.grafo_estado, user_intent)
+                b_msg = self._safe_generate(
+                    self.agent_b,
+                    phase_id,
+                    iteration,
+                    a_msg.grafo_estado,
+                    user_intent,
+                    AgentId.B,
+                )
 
             tokens_fase += a_msg.telemetria.tokens_consumidos + b_msg.telemetria.tokens_consumidos
             a_graph_text = self._graph_text(a_msg.grafo_estado)

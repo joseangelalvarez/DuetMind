@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from duetmind.models import AgentId, CompactAgentMessage
+
 
 def _extract_json_block(raw_text: str) -> str:
     start = raw_text.find("{")
@@ -51,14 +53,59 @@ def _repair_truncation(candidate: str) -> str:
 
 
 def _sanitize_json(candidate: str) -> str:
-    sanitized = candidate.replace("'", '"')
+    sanitized = re.sub(r"'([^'\\]*(?:\\.[^'\\]*)*)'\s*:", r'"\1":', candidate)
+    sanitized = re.sub(r":\s*'([^'\\]*(?:\\.[^'\\]*)*)'", r': "\1"', sanitized)
     sanitized = re.sub(r"\\([^\"\\/bfnrtu])", r"\1", sanitized)
     return sanitized
 
 
-def parse_with_layered_repair(raw_text: str, target_schema: type[BaseModel]) -> BaseModel:
+def _build_sentinel_compact_message(
+    *,
+    phase_id: int,
+    iteration: int,
+    agent_id: AgentId | None,
+) -> CompactAgentMessage:
+    emitter = agent_id if agent_id is not None else AgentId.M
+    return CompactAgentMessage.model_validate(
+        {
+            "fase_id": max(1, phase_id),
+            "iteracion": max(1, iteration),
+            "emisor": emitter,
+            "grafo_estado": {"sentinel": "parse_failure"},
+            "alertas": [
+                {
+                    "componente_id": "middleware",
+                    "invariante_violada": "layered_parse_failure",
+                    "gravedad_score": 3,
+                    "es_bloqueante": True,
+                }
+            ],
+            "confianza": 0.0,
+            "telemetria": {
+                "vram_actual_gb": 0.0,
+                "tiempo_ejecucion_ms": 0,
+                "tokens_consumidos": 0,
+                "timeout_flag": False,
+                "oom_flag": False,
+            },
+        }
+    )
+
+
+def parse_with_layered_repair(
+    raw_text: str,
+    target_schema: type[BaseModel],
+    *,
+    phase_id: int = 0,
+    iteration: int = 0,
+    agent_id: AgentId | None = None,
+) -> BaseModel:
     # Layer 1: direct parse
-    candidate = _extract_json_block(raw_text)
+    try:
+        candidate = _extract_json_block(raw_text)
+    except Exception:
+        candidate = ""
+
     try:
         return target_schema.model_validate_json(candidate)
     except (ValidationError, ValueError, json.JSONDecodeError):
@@ -72,8 +119,21 @@ def parse_with_layered_repair(raw_text: str, target_schema: type[BaseModel]) -> 
         pass
 
     # Layer 3: lightweight sanitize fallback (still local in bootstrap)
-    sanitized = _sanitize_json(candidate)
-    return target_schema.model_validate_json(sanitized)
+    try:
+        sanitized = _sanitize_json(candidate)
+        return target_schema.model_validate_json(sanitized)
+    except (ValidationError, ValueError, json.JSONDecodeError):
+        pass
+
+    # Layer 4: sentinel fallback must not throw.
+    if target_schema is CompactAgentMessage:
+        return _build_sentinel_compact_message(
+            phase_id=phase_id,
+            iteration=iteration,
+            agent_id=agent_id,
+        )
+
+    return target_schema.model_construct()
 
 
 def structural_delta_ratio(prev_state: dict[str, Any], new_state: dict[str, Any]) -> float:

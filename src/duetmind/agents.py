@@ -111,7 +111,13 @@ class ProviderAgentAdapter:
             prompt_text=prompt_text,
         )
         response = self.provider.complete(request)
-        message = parse_with_layered_repair(response.raw_text, CompactAgentMessage)
+        message = parse_with_layered_repair(
+            response.raw_text,
+            CompactAgentMessage,
+            phase_id=phase_id,
+            iteration=iteration,
+            agent_id=self.agent_id,
+        )
         if message.emisor != self.agent_id:
             message.emisor = self.agent_id
         if not message.grafo_estado:

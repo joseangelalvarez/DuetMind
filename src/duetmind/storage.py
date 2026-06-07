@@ -32,6 +32,7 @@ class Storage:
         self._ledger_cache: Dict[str, str] = {}
         self._finalizer = weakref.finalize(self, Storage._finalize_connection, self._thread_local)
         self._init_db()
+        self._init_genesis_block()
 
     def _connect(self) -> sqlite3.Connection:
         conn = getattr(self._thread_local, "conn", None)
@@ -133,6 +134,23 @@ class Storage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_environment ON phase_results(environment)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_created_at ON phase_results(created_at)")
             conn.commit()
+
+    def _init_genesis_block(self) -> None:
+        existing = self._fetchone("SELECT 1 FROM ledger WHERE phase_id = 0 LIMIT 1")
+        if existing is None:
+            genesis_manifest = {
+                "__genesis__": "duetmind_v0",
+                "__schema_version__": "1",
+            }
+            self.append_ledger(0, genesis_manifest)
+            return
+
+        if not self._ledger_cache:
+            rows = self._fetchall("SELECT tabla_dependencias_json FROM ledger WHERE phase_id = 0")
+            cache: Dict[str, str] = {}
+            for row in rows:
+                cache.update(json.loads(row[0]))
+            self._ledger_cache = cache
 
     def get_snapshot(self, phase_id: int) -> dict[str, str] | None:
         row = self._fetchone("SELECT manifest_json FROM snapshots WHERE phase_id = ?", (phase_id,))

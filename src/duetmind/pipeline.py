@@ -6,7 +6,7 @@ from typing import Callable
 
 from duetmind.agents import AgentAdapter, build_default_agents, build_provider_agents
 from duetmind.prompts import PromptLibrary
-from duetmind.models import EvalResult
+from duetmind.models import ControlSignal, EvalResult
 from duetmind.orchestrator import Orchestrator
 
 
@@ -34,6 +34,14 @@ DEFAULT_PHASE_SCHEDULE: list[PhaseSpec] = [
     PhaseSpec(11, "Cierre", "cloud", 4, "audit"),
     PhaseSpec(12, "Cierre", "cloud", 4, "audit"),
 ]
+
+TERMINAL_SIGNALS: frozenset[str] = frozenset(
+    {
+        ControlSignal.ABORT.value,
+        ControlSignal.RESET_FROM_PROMPT_3.value,
+        ControlSignal.CLOUD_ESC.value,
+    }
+)
 
 
 @dataclass
@@ -90,6 +98,6 @@ class PipelineRunner:
                 result.score,
                 result.reason,
             )
-            if result.signal.value in {"ESCALAR_A_HUMANO", "REINICIAR_DESDE_PROMPT_3"}:
+            if result.signal.value in TERMINAL_SIGNALS:
                 break
         return PipelineResult(results)

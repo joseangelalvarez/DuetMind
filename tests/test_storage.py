@@ -6,6 +6,26 @@ from duetmind.storage import Storage
 
 
 class TestStorage(unittest.TestCase):
+    def test_genesis_block_inserted_on_init(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            genesis_blocks = storage.list_ledger_blocks(phase_id=0)
+            self.assertGreaterEqual(len(genesis_blocks), 1)
+            self.assertGreaterEqual(len(storage._ledger_cache), 1)
+            storage.close()
+
+    def test_verify_integrity_phase1_not_trivially_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            self.assertFalse(storage.verify_integrity({"__schema_version__": "2"}))
+            storage.close()
+
+    def test_integrity_violation_detected_after_genesis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            self.assertFalse(storage.verify_integrity({"__genesis__": "tampered"}))
+            storage.close()
+
     def test_snapshot_and_ledger_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"
