@@ -54,6 +54,16 @@ class CaptureProvider:
         )
 
 
+class FixedDistanceAnalyzer:
+    def __init__(self, value: float) -> None:
+        self.value = value
+        self.calls = 0
+
+    def distance(self, a_text: str, b_text: str) -> float:
+        self.calls += 1
+        return self.value
+
+
 def build_message(
     *,
     agent_id: AgentId,
@@ -160,6 +170,25 @@ class TestOrchestrator(unittest.TestCase):
                 self.assertEqual(result.signal, ControlSignal.CLOUD_ESC)
                 summary = storage.telemetry_summary(phase_id=1)
                 self.assertTrue(any(row["state"] == "AGENT_TIMEOUT" for row in summary))
+            finally:
+                storage.close()
+
+    def test_run_phase_uses_semantic_analyzer_for_ds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            analyzer = FixedDistanceAnalyzer(0.99)
+            orch = Orchestrator(
+                storage,
+                config=RuntimeConfig(ds_critical=0.35, imax=1),
+                agent_a=FixedSemanticAgent(AgentId.A, "aligned"),
+                agent_b=FixedSemanticAgent(AgentId.B, "aligned"),
+                semantic_analyzer=analyzer,
+            )
+            try:
+                result = orch.run_phase(1, "aligned")
+                self.assertEqual(result.signal, ControlSignal.RESET_FROM_PROMPT_3)
+                self.assertEqual(result.reason, "deriva_semantica_critica")
+                self.assertGreater(analyzer.calls, 0)
             finally:
                 storage.close()
 

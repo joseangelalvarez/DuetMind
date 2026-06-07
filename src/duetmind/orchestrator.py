@@ -10,7 +10,8 @@ from duetmind.fsm import CollisionInputs, FsmEvent, FsmState, resolve_collision_
 from duetmind.middleware import structural_delta_ratio
 from duetmind.moderator import HeuristicModerator, ModeratorAdapter
 from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, EvalResult, TelemetryCycle
-from duetmind.scoring import compute_score, cosine_distance_from_token_sets, jaccard_similarity, jensen_shannon_distance
+from duetmind.scoring import compute_score, jaccard_similarity, jensen_shannon_distance
+from duetmind.semantic import SemanticDriftAnalyzer
 from duetmind.storage import Storage
 
 
@@ -37,6 +38,7 @@ class Orchestrator:
         agent_a: AgentAdapter | None = None,
         agent_b: AgentAdapter | None = None,
         moderator: ModeratorAdapter | None = None,
+        semantic_analyzer: SemanticDriftAnalyzer | None = None,
     ) -> None:
         self.storage = storage
         self.config = config or RuntimeConfig()
@@ -47,6 +49,7 @@ class Orchestrator:
             score_freeze_threshold=self.config.score_freeze_threshold,
             score_converge_threshold=self.config.score_converge_threshold,
         )
+        self.semantic_analyzer = semantic_analyzer or SemanticDriftAnalyzer()
 
     @staticmethod
     def _graph_text(graph: dict[str, str]) -> str:
@@ -318,7 +321,7 @@ class Orchestrator:
                 ds = 0.0
             else:
                 semantic_text = self._semantic_values(a_msg.grafo_estado)
-                ds = cosine_distance_from_token_sets(semantic_text, user_intent)
+                ds = self.semantic_analyzer.distance(semantic_text, user_intent)
 
             collision = resolve_collision_priority(
                 CollisionInputs(

@@ -12,6 +12,11 @@ dependencies = [
   "pydantic>=2.7,<3",
 ]
 
+[project.optional-dependencies]
+semantic = [
+  "sentence-transformers>=2.7,<4",
+]
+
 [project.scripts]
 duetmind = "duetmind.main:main"
 
