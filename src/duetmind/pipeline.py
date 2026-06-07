@@ -79,8 +79,7 @@ class PipelineRunner:
                 agent_a=agent_a,
                 agent_b=agent_b,
             )
-            phase_prompt = self.prompt_library.render(phase.phase_id, intent)
-            result = phase_orchestrator.run_phase(phase.phase_id, phase_prompt)
+            result = phase_orchestrator.run_phase(phase.phase_id, intent)
             results.append((phase, result))
             self.orchestrator.storage.save_phase_result(
                 phase.phase_id,

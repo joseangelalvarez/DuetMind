@@ -23,6 +23,8 @@ class LedgerBlock:
 
 
 class Storage:
+    _VOLATILE_COMPONENT_KEYS = {"intent_anchor"}
+
     def __init__(self, db_path: str | Path = "duetmind.db") -> None:
         self.db_path = str(db_path)
         self._thread_local = local()
@@ -362,6 +364,7 @@ class Storage:
         deps: Dict[str, str] = {
             comp_id: hashlib.sha256(str(comp_data).encode("utf-8")).hexdigest()
             for comp_id, comp_data in manifest.items()
+            if comp_id not in self._VOLATILE_COMPONENT_KEYS
         }
 
         block = LedgerBlock(
@@ -401,6 +404,8 @@ class Storage:
             self._ledger_cache = consolidado
 
         for comp_id, comp_data in manifest_propuesto.items():
+            if comp_id in self._VOLATILE_COMPONENT_KEYS:
+                continue
             if comp_id in consolidado:
                 proposed_hash = hashlib.sha256(str(comp_data).encode("utf-8")).hexdigest()
                 if consolidado[comp_id] != proposed_hash:

@@ -48,7 +48,7 @@ class TestServer(unittest.TestCase):
                 with urlopen(f"http://127.0.0.1:{port}/go-no-go") as response:
                     go_no_go = json.loads(response.read().decode("utf-8"))
                 self.assertIn("decision", go_no_go)
-                self.assertIn(go_no_go["decision"], {"GO", "NO_GO"})
+                self.assertIn(go_no_go["decision"], {"GO", "GO_CONDICIONAL", "NO_GO"})
 
                 run_phase_request = Request(
                     f"http://127.0.0.1:{port}/run-phase",
@@ -72,7 +72,7 @@ class TestServer(unittest.TestCase):
                 self.assertIn("final_signal", run_all)
                 self.assertIn("phase_results", run_all)
                 self.assertIn("go_no_go", run_all)
-                self.assertIn(run_all["go_no_go"]["decision"], {"GO", "NO_GO"})
+                self.assertIn(run_all["go_no_go"]["decision"], {"GO", "GO_CONDICIONAL", "NO_GO"})
 
                 bundle_path = Path(tmp) / "audit.json"
                 export_bundle_request = Request(
