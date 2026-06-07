@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from duetmind.agents import AgentAdapter, build_default_agents
 from duetmind.fsm import CollisionInputs, FsmState, resolve_collision_priority
 from duetmind.middleware import structural_delta_ratio
-from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalResult, TelemetryCycle
-from duetmind.scoring import compute_score, cosine_distance_from_token_sets, jaccard_similarity
+from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, EvalResult, TelemetryCycle
+from duetmind.scoring import compute_score, cosine_distance_from_token_sets, jaccard_similarity, jensen_shannon_distance
 from duetmind.storage import Storage
 
 
@@ -19,6 +19,8 @@ class RuntimeConfig:
     delta_score_epsilon: float = 0.02
     semantic_delta_threshold: float = 0.01
     token_budget_per_phase: int = 12000
+    score_freeze_threshold: float = 7.5
+    score_converge_threshold: float = 6.0
 
 
 class Orchestrator:
@@ -38,6 +40,46 @@ class Orchestrator:
     @staticmethod
     def _graph_text(graph: dict[str, str]) -> str:
         return " ".join(f"{k}={v}" for k, v in sorted(graph.items()))
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        return text.lower().split()
+
+    @staticmethod
+    def _semantic_values(graph: dict[str, str]) -> str:
+        structural_prefixes = ("phase_", "intent_anchor", "__")
+        values = [v for k, v in graph.items() if not any(k.startswith(prefix) for prefix in structural_prefixes)]
+        if values:
+            return " ".join(values)
+        return " ".join(graph.values())
+
+    @staticmethod
+    def _risk_from_alerts(a: CompactAgentMessage, b: CompactAgentMessage) -> tuple[float, int]:
+        all_alerts = [*a.alertas, *b.alertas]
+        blockers = sum(1 for alert in all_alerts if alert.es_bloqueante)
+        risk = 1.0 - (blockers / (blockers + 1))
+        return risk, blockers
+
+    @staticmethod
+    def _build_eval_input(
+        a_msg: CompactAgentMessage,
+        b_msg: CompactAgentMessage,
+        ds: float,
+        loop_flag: bool,
+        tokens_fase: int,
+        token_budget_per_phase: int,
+    ) -> EvalInput:
+        a_tokens = Orchestrator._tokenize(Orchestrator._graph_text(a_msg.grafo_estado))
+        b_tokens = Orchestrator._tokenize(Orchestrator._graph_text(b_msg.grafo_estado))
+        return EvalInput(
+            a_msg=a_msg,
+            b_msg=b_msg,
+            ds=ds,
+            loop_flag=loop_flag,
+            jsd=jensen_shannon_distance(a_tokens, b_tokens),
+            tokens_fase=tokens_fase,
+            presupuesto_tokens_fase=token_budget_per_phase,
+        )
 
     @staticmethod
     def _make_sentinel_message(phase_id: int, iteration: int, agent_id: AgentId) -> CompactAgentMessage:
@@ -87,13 +129,9 @@ class Orchestrator:
 
     def _evaluate(
         self,
-        a: CompactAgentMessage,
-        b: CompactAgentMessage,
-        ds: float,
-        loop_flag: bool,
-        tokens_fase: int,
+        eval_input: EvalInput,
     ) -> EvalResult:
-        if ds > self.config.ds_critical:
+        if eval_input.ds > self.config.ds_critical:
             return EvalResult(
                 score=0.0,
                 signal=ControlSignal.RESET_FROM_PROMPT_3,
@@ -101,7 +139,7 @@ class Orchestrator:
                 bloqueantes=1,
             )
 
-        if loop_flag:
+        if eval_input.loop_flag:
             return EvalResult(
                 score=0.0,
                 signal=ControlSignal.ABORT,
@@ -109,36 +147,30 @@ class Orchestrator:
                 bloqueantes=1,
             )
 
-        blocking_alerts = sum(1 for alert in (*a.alertas, *b.alertas) if alert.es_bloqueante)
-        if blocking_alerts > 0:
-            return EvalResult(
-                score=0.0,
-                signal=ControlSignal.ROLLBACK,
-                reason="blocking_alert",
-                bloqueantes=blocking_alerts,
-            )
-
-        agreement = 1.0
-        stability = 0.9
-        risk = 0.9
+        agreement = max(0.0, 1.0 - eval_input.jsd)
+        stability = max(
+            0.0,
+            1.0 - structural_delta_ratio(eval_input.a_msg.grafo_estado, eval_input.b_msg.grafo_estado),
+        )
+        risk, blocking_alerts = self._risk_from_alerts(eval_input.a_msg, eval_input.b_msg)
         score = compute_score(
             agreement,
             stability,
             risk,
-            a.confianza,
-            b.confianza,
-            tokens_fase,
-            self.config.token_budget_per_phase,
+            eval_input.a_msg.confianza,
+            eval_input.b_msg.confianza,
+            eval_input.tokens_fase,
+            eval_input.presupuesto_tokens_fase,
         )
 
-        if score >= 8.5:
+        if score >= self.config.score_freeze_threshold:
             signal = ControlSignal.FREEZE_ADVANCE
-        elif score >= 7.0:
+        elif score >= self.config.score_converge_threshold:
             signal = ControlSignal.CONVERGE_CONDITIONAL
         else:
             signal = ControlSignal.ROLLBACK
 
-        return EvalResult(score=score, signal=signal, reason="score_eval", bloqueantes=0)
+        return EvalResult(score=score, signal=signal, reason="score_eval", bloqueantes=blocking_alerts)
 
     def run_phase(self, phase_id: int, user_intent: str) -> EvalResult:
         state = FsmState.INIT
@@ -198,7 +230,8 @@ class Orchestrator:
             loop_jaccard = jaccard_similarity(current_tokens, prev_prev_tokens) if prev_prev_tokens else 0.0
             loop_flag = loop_jaccard > self.config.loop_jaccard_threshold and abs(last_score - 0.0) <= self.config.delta_score_epsilon
 
-            ds = cosine_distance_from_token_sets(a_graph_text, user_intent)
+            semantic_text = self._semantic_values(a_msg.grafo_estado)
+            ds = cosine_distance_from_token_sets(semantic_text, user_intent)
 
             collision = resolve_collision_priority(
                 CollisionInputs(
@@ -233,7 +266,15 @@ class Orchestrator:
                     return EvalResult(score=0.0, signal=mapping[state], reason=collision.reason, bloqueantes=1)
 
             state = FsmState.EVAL
-            eval_result = self._evaluate(a_msg, b_msg, ds, loop_flag, tokens_fase)
+            eval_input = self._build_eval_input(
+                a_msg,
+                b_msg,
+                ds,
+                loop_flag,
+                tokens_fase,
+                self.config.token_budget_per_phase,
+            )
+            eval_result = self._evaluate(eval_input)
             self.storage.append_telemetry(
                 phase_id,
                 iteration,

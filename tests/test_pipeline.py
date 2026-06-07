@@ -157,7 +157,7 @@ class TestPipeline(unittest.TestCase):
 
             runner = PipelineRunner(orch, schedule=schedule, agent_resolver=resolver)
             try:
-                result = runner.run("intent=demo")
+                result = runner.run("demo")
 
                 self.assertEqual(len(result.phase_results), 2)
                 self.assertNotIn(result.final_signal, {ControlSignal.ABORT.value, ControlSignal.RESET_FROM_PROMPT_3.value, ControlSignal.CLOUD_ESC.value})

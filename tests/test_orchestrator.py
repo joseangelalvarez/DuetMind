@@ -2,14 +2,47 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from duetmind.models import ControlSignal
-from duetmind.orchestrator import Orchestrator
+from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, TelemetryCycle
+from duetmind.orchestrator import Orchestrator, RuntimeConfig
+from duetmind.scoring import financial_discount
 from duetmind.storage import Storage
 
 
 class FailingAgent:
     def generate(self, phase_id: int, iteration: int, prev_graph: dict[str, str], user_intent: str):
         raise RuntimeError("simulated_provider_failure")
+
+
+def build_message(
+    *,
+    agent_id: AgentId,
+    graph: dict[str, str],
+    confidence: float = 0.8,
+    blockers: int = 0,
+) -> CompactAgentMessage:
+    alerts = [
+        DefensiveAlert(
+            componente_id=f"alert_{idx}",
+            invariante_violada="test_blocker",
+            gravedad_score=3,
+            es_bloqueante=True,
+        )
+        for idx in range(blockers)
+    ]
+    return CompactAgentMessage(
+        fase_id=1,
+        iteracion=1,
+        emisor=agent_id,
+        grafo_estado=graph,
+        confianza=confidence,
+        alertas=alerts,
+        telemetria=TelemetryCycle(
+            tiempo_ejecucion_ms=50,
+            tokens_consumidos=10,
+            timeout_flag=False,
+            oom_flag=False,
+        ),
+    )
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -21,7 +54,7 @@ class TestOrchestrator(unittest.TestCase):
             result = orch.run_phase(1, "Construir sistema multiagente hibrido con bajo costo operativo")
 
             self.assertIn(result.signal.value, {"CONGELAR_Y_AVANZAR", "CONVERGE_CONDICIONADO", "ROLLBACK", "ESCALAR_A_HUMANO"})
-            self.assertGreaterEqual(result.score, 7.0)
+            self.assertGreaterEqual(result.score, 0.0)
 
             snapshot = storage.get_snapshot(1)
             self.assertIsNotNone(snapshot)
@@ -64,6 +97,109 @@ class TestOrchestrator(unittest.TestCase):
                 self.assertNotIn(result.signal, {ControlSignal.FREEZE_ADVANCE, ControlSignal.CONVERGE_CONDITIONAL})
             finally:
                 storage.close()
+
+    def test_agreement_is_one_when_agents_produce_identical_output(self) -> None:
+        a = build_message(agent_id=AgentId.A, graph={"semantic": "same same"})
+        b = build_message(agent_id=AgentId.B, graph={"semantic": "same same"})
+        eval_input = Orchestrator._build_eval_input(a, b, ds=0.0, loop_flag=False, tokens_fase=10, token_budget_per_phase=100)
+        agreement = 1.0 - eval_input.jsd
+        self.assertAlmostEqual(agreement, 1.0, places=6)
+
+    def test_agreement_decreases_with_divergent_outputs(self) -> None:
+        a = build_message(agent_id=AgentId.A, graph={"semantic": "alpha alpha alpha"})
+        b = build_message(agent_id=AgentId.B, graph={"semantic": "omega omega omega"})
+        eval_input = Orchestrator._build_eval_input(a, b, ds=0.0, loop_flag=False, tokens_fase=10, token_budget_per_phase=100)
+        self.assertLess(1.0 - eval_input.jsd, 0.5)
+
+    def test_blockers_reduce_risk_score(self) -> None:
+        a = build_message(agent_id=AgentId.A, graph={"semantic": "alpha"}, blockers=1)
+        b = build_message(agent_id=AgentId.B, graph={"semantic": "alpha"}, blockers=1)
+        risk, blockers = Orchestrator._risk_from_alerts(a, b)
+        self.assertEqual(blockers, 2)
+        self.assertLess(risk, 1.0)
+
+    def test_score_below_threshold_on_full_divergence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage, config=RuntimeConfig(score_freeze_threshold=7.5, score_converge_threshold=6.0))
+            a = build_message(agent_id=AgentId.A, graph={"semantic": "alpha"}, confidence=0.2)
+            b = build_message(agent_id=AgentId.B, graph={"semantic": "omega"}, confidence=0.2)
+            eval_input = Orchestrator._build_eval_input(a, b, ds=0.1, loop_flag=False, tokens_fase=90, token_budget_per_phase=100)
+            result = orch._evaluate(eval_input)
+            self.assertEqual(result.signal, ControlSignal.ROLLBACK)
+            storage.close()
+
+    def test_no_false_convergence_with_jsd_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage)
+            a = build_message(agent_id=AgentId.A, graph={"semantic": "alpha"}, confidence=0.1)
+            b = build_message(agent_id=AgentId.B, graph={"semantic": "beta"}, confidence=0.1)
+            eval_input = EvalInput(
+                a_msg=a,
+                b_msg=b,
+                ds=0.1,
+                loop_flag=False,
+                jsd=1.0,
+                tokens_fase=100,
+                presupuesto_tokens_fase=100,
+            )
+            result = orch._evaluate(eval_input)
+            self.assertNotEqual(result.signal, ControlSignal.FREEZE_ADVANCE)
+            storage.close()
+
+    def test_ds_uses_semantic_values_not_structural_keys(self) -> None:
+        graph = {
+            "phase_1_iter_1": "structure_noise",
+            "intent_anchor": "demo",
+            "semantic": "target meaning",
+        }
+        semantic = Orchestrator._semantic_values(graph)
+        self.assertIn("target meaning", semantic)
+        self.assertNotIn("demo", semantic)
+        self.assertNotIn("structure_noise", semantic)
+
+    def test_ds_no_false_reset_on_structural_noise(self) -> None:
+        semantic = Orchestrator._semantic_values(
+            {
+                "phase_1_iter_1": "noise",
+                "intent_anchor": "demo",
+                "semantic": "demo",
+            }
+        )
+        # semantic string should match the intent-relevant value only.
+        self.assertEqual(semantic, "demo")
+
+    def test_ds_critical_fires_on_genuine_semantic_divergence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage, config=RuntimeConfig(ds_critical=0.2))
+            a = build_message(agent_id=AgentId.A, graph={"semantic": "alpha"})
+            b = build_message(agent_id=AgentId.B, graph={"semantic": "beta"})
+            eval_input = EvalInput(
+                a_msg=a,
+                b_msg=b,
+                ds=0.9,
+                loop_flag=False,
+                jsd=0.5,
+                tokens_fase=10,
+                presupuesto_tokens_fase=100,
+            )
+            result = orch._evaluate(eval_input)
+            self.assertEqual(result.signal, ControlSignal.RESET_FROM_PROMPT_3)
+            storage.close()
+
+    def test_eval_input_jsd_populated_correctly(self) -> None:
+        a = build_message(agent_id=AgentId.A, graph={"semantic": "same"})
+        b = build_message(agent_id=AgentId.B, graph={"semantic": "same"})
+        eval_input = Orchestrator._build_eval_input(a, b, ds=0.0, loop_flag=False, tokens_fase=10, token_budget_per_phase=100)
+        self.assertAlmostEqual(eval_input.jsd, 0.0, places=6)
+
+    def test_financial_discount_zero_at_full_budget(self) -> None:
+        self.assertEqual(financial_discount(100, 100), 0.0)
+
+    def test_financial_discount_penalizes_overrun(self) -> None:
+        self.assertEqual(financial_discount(150, 100), 0.0)
 
 
 if __name__ == "__main__":

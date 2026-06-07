@@ -59,7 +59,7 @@ def jensen_shannon_distance(tokens_a: list[str], tokens_b: list[str]) -> float:
 
 def financial_discount(tokens_fase: int, presupuesto_fase: int) -> float:
     ratio = tokens_fase / max(1, presupuesto_fase)
-    return max(0.5, 1.0 - ratio * ratio)
+    return max(0.0, 1.0 - ratio * ratio)
 
 
 def compute_score(
