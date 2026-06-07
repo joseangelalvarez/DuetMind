@@ -2,10 +2,47 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from duetmind.models import ControlSignal
 from duetmind.storage import Storage
 
 
 class TestStorage(unittest.TestCase):
+    def test_snapshot_versioned_by_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db", run_id="run-1")
+            storage.save_snapshot(1, {"v": "one"}, signal=ControlSignal.FREEZE_ADVANCE.value)
+            storage.save_snapshot(1, {"v": "two"}, signal=ControlSignal.FREEZE_ADVANCE.value)
+
+            snapshots = [row for row in storage.list_snapshots(phase_id=1) if row["run_id"] == "run-1"]
+            attempts = [int(row["attempt"]) for row in snapshots]
+
+            self.assertEqual(attempts, [1, 2])
+            storage.close()
+
+    def test_get_snapshot_prefers_go_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db", run_id="run-1")
+            storage.save_snapshot(1, {"v": "bad"}, signal=ControlSignal.ROLLBACK.value)
+            storage.save_snapshot(1, {"v": "good"}, signal=ControlSignal.FREEZE_ADVANCE.value)
+
+            snapshot = storage.get_snapshot(1)
+
+            self.assertEqual(snapshot, {"v": "good"})
+            storage.close()
+
+    def test_get_snapshot_fallback_cross_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            storage_run_1 = Storage(db_path, run_id="run-a")
+            storage_run_1.save_snapshot(2, {"v": "from-run-a"}, signal=ControlSignal.FREEZE_ADVANCE.value)
+
+            storage_run_2 = Storage(db_path, run_id="run-b")
+            snapshot = storage_run_2.get_snapshot(2)
+
+            self.assertEqual(snapshot, {"v": "from-run-a"})
+            storage_run_1.close()
+            storage_run_2.close()
+
     def test_run_id_isolation_prevents_cross_run_abort(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"

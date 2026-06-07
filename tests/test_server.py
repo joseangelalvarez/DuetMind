@@ -61,6 +61,41 @@ class TestServer(unittest.TestCase):
                 self.assertEqual(run_phase["phase_id"], 1)
                 self.assertIn("signal", run_phase)
 
+                run_phase_blocked_request = Request(
+                    f"http://127.0.0.1:{port}/run-phase",
+                    data=json.dumps(
+                        {
+                            "phase_id": 9,
+                            "intent": "demo",
+                            "agent_mode": "mock",
+                            "require_prerequisite": True,
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(run_phase_blocked_request) as response:
+                    run_phase_blocked = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(run_phase_blocked["signal"], "ESCALAR_A_HUMANO")
+                self.assertEqual(run_phase_blocked["reason"], "missing_prerequisite_snapshot")
+
+                run_phase_unblocked_request = Request(
+                    f"http://127.0.0.1:{port}/run-phase",
+                    data=json.dumps(
+                        {
+                            "phase_id": 9,
+                            "intent": "demo",
+                            "agent_mode": "mock",
+                            "require_prerequisite": False,
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(run_phase_unblocked_request) as response:
+                    run_phase_unblocked = json.loads(response.read().decode("utf-8"))
+                self.assertNotEqual(run_phase_unblocked["reason"], "missing_prerequisite_snapshot")
+
                 run_all_request = Request(
                     f"http://127.0.0.1:{port}/run-all",
                     data=json.dumps({"intent": "demo", "agent_mode": "mock"}).encode("utf-8"),

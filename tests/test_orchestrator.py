@@ -46,6 +46,38 @@ def build_message(
 
 
 class TestOrchestrator(unittest.TestCase):
+    def test_run_phase_blocked_without_prerequisite_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage)
+
+            result = orch.run_phase(2, "demo", require_prerequisite=True)
+
+            self.assertEqual(result.signal, ControlSignal.ABORT)
+            self.assertEqual(result.reason, "missing_prerequisite_snapshot")
+            storage.close()
+
+    def test_run_phase_allowed_when_prerequisite_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            storage.save_snapshot(1, {"phase_1_iter_1": "seed"}, signal=ControlSignal.FREEZE_ADVANCE.value)
+            orch = Orchestrator(storage)
+
+            result = orch.run_phase(2, "demo", require_prerequisite=True)
+
+            self.assertNotEqual(result.reason, "missing_prerequisite_snapshot")
+            storage.close()
+
+    def test_run_phase_phase_1_no_prerequisite_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage)
+
+            result = orch.run_phase(1, "demo", require_prerequisite=True)
+
+            self.assertNotEqual(result.reason, "missing_prerequisite_snapshot")
+            storage.close()
+
     def test_demo_phase_converges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"

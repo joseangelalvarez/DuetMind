@@ -11,6 +11,8 @@ from pathlib import Path
 from threading import RLock, local
 from typing import Dict
 
+from duetmind.models import ControlSignal
+
 
 @dataclass
 class LedgerBlock:
@@ -84,9 +86,13 @@ class Storage:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS snapshots (
-                    phase_id INTEGER PRIMARY KEY,
+                    phase_id INTEGER NOT NULL,
+                    run_id TEXT NOT NULL DEFAULT '',
+                    attempt INTEGER NOT NULL DEFAULT 1,
+                    signal TEXT NOT NULL DEFAULT '',
                     manifest_json TEXT NOT NULL,
-                    created_at REAL NOT NULL
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (phase_id, run_id, attempt)
                 )
                 """
             )
@@ -135,12 +141,15 @@ class Storage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_phase_id ON ledger(phase_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_run_id ON ledger(run_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_created_at ON ledger(created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_phase_run ON snapshots(phase_id, run_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_signal ON snapshots(signal)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_environment ON phase_results(environment)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_created_at ON phase_results(created_at)")
             conn.commit()
 
         self._ensure_ledger_run_id_column()
+        self._ensure_snapshot_columns()
 
     def _ensure_ledger_run_id_column(self) -> None:
         row = self._fetchone("SELECT COUNT(*) FROM pragma_table_info('ledger') WHERE name = 'run_id'")
@@ -149,6 +158,27 @@ class Storage:
             return
         self._execute("ALTER TABLE ledger ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
         self._execute("CREATE INDEX IF NOT EXISTS idx_ledger_run_id ON ledger(run_id)")
+
+    def _ensure_snapshot_columns(self) -> None:
+        columns = {
+            str(row[1])
+            for row in self._fetchall("PRAGMA table_info('snapshots')")
+            if len(row) > 1
+        }
+
+        if "run_id" not in columns:
+            self._execute("ALTER TABLE snapshots ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
+        if "attempt" not in columns:
+            self._execute("ALTER TABLE snapshots ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1")
+        if "signal" not in columns:
+            self._execute("ALTER TABLE snapshots ADD COLUMN signal TEXT NOT NULL DEFAULT ''")
+
+        self._execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_phase_run_attempt
+            ON snapshots(phase_id, run_id, attempt)
+            """
+        )
 
     def _init_genesis_block(self) -> None:
         existing = self._fetchone("SELECT 1 FROM ledger WHERE phase_id = 0 AND run_id = '' LIMIT 1")
@@ -168,20 +198,88 @@ class Storage:
             self._ledger_cache = cache
             self._ledger_cache_run_id = self.run_id
 
-    def get_snapshot(self, phase_id: int) -> dict[str, str] | None:
-        row = self._fetchone("SELECT manifest_json FROM snapshots WHERE phase_id = ?", (phase_id,))
+    def has_go_snapshot(self, phase_id: int, run_id: str | None = None) -> bool:
+        effective_run = self.run_id if run_id is None else run_id
+        row = self._fetchone(
+            """
+            SELECT 1
+            FROM snapshots
+            WHERE phase_id = ? AND run_id = ? AND signal IN (?, ?)
+            LIMIT 1
+            """,
+            (
+                phase_id,
+                effective_run,
+                ControlSignal.FREEZE_ADVANCE.value,
+                ControlSignal.CONVERGE_CONDITIONAL.value,
+            ),
+        )
+        return row is not None
+
+    def get_snapshot(self, phase_id: int, run_id: str | None = None) -> dict[str, str] | None:
+        effective_run = self.run_id if run_id is None else run_id
+        go_signals = (ControlSignal.FREEZE_ADVANCE.value, ControlSignal.CONVERGE_CONDITIONAL.value)
+
+        row = self._fetchone(
+            """
+            SELECT manifest_json
+            FROM snapshots
+            WHERE phase_id = ? AND run_id = ? AND signal IN (?, ?)
+            ORDER BY attempt DESC
+            LIMIT 1
+            """,
+            (phase_id, effective_run, go_signals[0], go_signals[1]),
+        )
+        if row is None:
+            row = self._fetchone(
+                """
+                SELECT manifest_json
+                FROM snapshots
+                WHERE phase_id = ? AND signal IN (?, ?)
+                ORDER BY attempt DESC, created_at DESC
+                LIMIT 1
+                """,
+                (phase_id, go_signals[0], go_signals[1]),
+            )
+        if row is None:
+            row = self._fetchone(
+                """
+                SELECT manifest_json
+                FROM snapshots
+                WHERE phase_id = ?
+                ORDER BY attempt DESC, created_at DESC
+                LIMIT 1
+                """,
+                (phase_id,),
+            )
         return json.loads(row[0]) if row else None
 
-    def save_snapshot(self, phase_id: int, manifest: dict[str, str]) -> None:
+    def save_snapshot(
+        self,
+        phase_id: int,
+        manifest: dict[str, str],
+        signal: str = "",
+        run_id: str | None = None,
+    ) -> None:
+        effective_run = self.run_id if run_id is None else run_id
+        row = self._fetchone(
+            "SELECT COALESCE(MAX(attempt), 0) FROM snapshots WHERE phase_id = ? AND run_id = ?",
+            (phase_id, effective_run),
+        )
+        next_attempt = int(row[0]) + 1 if row and row[0] is not None else 1
         self._execute(
             """
-            INSERT INTO snapshots(phase_id, manifest_json, created_at)
-            VALUES(?, ?, ?)
-            ON CONFLICT(phase_id) DO UPDATE SET
-                manifest_json = excluded.manifest_json,
-                created_at = excluded.created_at
+            INSERT INTO snapshots(phase_id, run_id, attempt, signal, manifest_json, created_at)
+            VALUES(?, ?, ?, ?, ?, ?)
             """,
-            (phase_id, json.dumps(manifest, sort_keys=True), time.time()),
+            (
+                phase_id,
+                effective_run,
+                next_attempt,
+                signal,
+                json.dumps(manifest, sort_keys=True),
+                time.time(),
+            ),
         )
 
     def append_telemetry(
@@ -294,18 +392,21 @@ class Storage:
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self._fetchall(
             f"""
-            SELECT phase_id, manifest_json, created_at
+            SELECT phase_id, run_id, attempt, signal, manifest_json, created_at
             FROM snapshots
             {where_sql}
-            ORDER BY phase_id
+            ORDER BY phase_id, run_id, attempt
             """,
             tuple(params),
         )
         return [
             {
                 "phase_id": row[0],
-                "manifest": json.loads(row[1]),
-                "created_at": row[2],
+                "run_id": row[1],
+                "attempt": row[2],
+                "signal": row[3],
+                "manifest": json.loads(row[4]),
+                "created_at": row[5],
             }
             for row in rows
         ]

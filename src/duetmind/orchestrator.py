@@ -173,12 +173,19 @@ class Orchestrator:
 
         return EvalResult(score=score, signal=signal, reason="score_eval", bloqueantes=blocking_alerts)
 
-    def run_phase(self, phase_id: int, user_intent: str) -> EvalResult:
+    def run_phase(self, phase_id: int, user_intent: str, *, require_prerequisite: bool = True) -> EvalResult:
         if phase_id < 1 or phase_id > self.config.max_phase_id:
             return EvalResult(
                 score=0.0,
                 signal=ControlSignal.ABORT,
                 reason="phase_id_out_of_bounds",
+                bloqueantes=1,
+            )
+        if phase_id > 1 and require_prerequisite and not self.storage.has_go_snapshot(phase_id - 1):
+            return EvalResult(
+                score=0.0,
+                signal=ControlSignal.ABORT,
+                reason="missing_prerequisite_snapshot",
                 bloqueantes=1,
             )
         state = FsmState.INIT
@@ -292,7 +299,7 @@ class Orchestrator:
             )
 
             if eval_result.signal in (ControlSignal.FREEZE_ADVANCE, ControlSignal.CONVERGE_CONDITIONAL):
-                self.storage.save_snapshot(phase_id, a_msg.grafo_estado)
+                self.storage.save_snapshot(phase_id, a_msg.grafo_estado, signal=eval_result.signal.value)
                 self.storage.append_ledger(phase_id, a_msg.grafo_estado)
                 self.storage.append_telemetry(
                     phase_id,

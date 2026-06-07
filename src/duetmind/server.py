@@ -130,7 +130,8 @@ def build_audit_handler(storage: Storage, api_key: str | None = None) -> type[Ba
             if parsed.path == "/run-phase":
                 phase_id = int(payload.get("phase_id", 1))
                 intent = str(payload.get("intent", "Construir sistema multiagente hibrido con bajo costo operativo"))
-                result = orch.run_phase(phase_id, intent)
+                require_prerequisite = bool(payload.get("require_prerequisite", True))
+                result = orch.run_phase(phase_id, intent, require_prerequisite=require_prerequisite)
                 self._write_json(
                     200,
                     {
