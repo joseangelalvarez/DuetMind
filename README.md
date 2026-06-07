@@ -67,6 +67,15 @@ python -m duetmind.main --prepare-distribution staging-linux --distribution-plat
 
 Eso crea un staging autocontenido con `launcher-config.json`, `distribution-manifest.json` y la arbolizacion base para `resources/`, `engines/`, `models/` y `workspace/`.
 
+## Empaquetar backend
+
+```powershell
+python -m duetmind.main --export-backend-spec backend_core.spec
+python -m duetmind.main --prepare-backend-packaging backend-build
+```
+
+Eso genera un `backend_core.spec` listo para PyInstaller y un staging con `backend-packaging-manifest.json` y script de build para la plataforma seleccionada.
+
 HTTP export bundle:
 
 ```powershell

@@ -7,6 +7,7 @@ __all__ = [
     "exceptions",
     "semantic",
     "distribution",
+    "packaging",
     "storage",
     "scoring",
     "moderator",

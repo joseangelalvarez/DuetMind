@@ -6,6 +6,7 @@ import json
 from duetmind.analysis import assess_go_no_go
 from duetmind.agents import build_default_agents, build_provider_agents
 from duetmind.distribution import DistributionPlatform, build_distribution_manifest, prepare_distribution_staging, write_distribution_manifest
+from duetmind.packaging import PackagingPlatform, build_backend_packaging_plan, prepare_backend_packaging_staging, write_backend_spec
 from duetmind.pipeline import PipelineRunner
 from duetmind.orchestrator import Orchestrator
 from duetmind.server import serve_audit_api
@@ -33,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--go-no-go", action="store_true")
     parser.add_argument("--export-distribution-manifest", type=str, default=None)
     parser.add_argument("--prepare-distribution", type=str, default=None)
+    parser.add_argument("--export-backend-spec", type=str, default=None)
+    parser.add_argument("--prepare-backend-packaging", type=str, default=None)
     parser.add_argument(
         "--distribution-platform",
         type=str,
@@ -57,6 +60,8 @@ def main() -> None:
     args = build_parser().parse_args()
     distribution_platform = DistributionPlatform(args.distribution_platform)
     distribution_manifest = build_distribution_manifest(distribution_platform)
+    packaging_platform = PackagingPlatform(args.distribution_platform)
+    packaging_plan = build_backend_packaging_plan(packaging_platform)
 
     if args.export_distribution_manifest:
         write_distribution_manifest(args.export_distribution_manifest, distribution_manifest)
@@ -66,6 +71,16 @@ def main() -> None:
     if args.prepare_distribution:
         staging_root = prepare_distribution_staging(args.prepare_distribution, distribution_manifest)
         print(f"prepared_distribution={staging_root}")
+        return
+
+    if args.export_backend_spec:
+        write_backend_spec(args.export_backend_spec, packaging_plan)
+        print(f"exported_backend_spec={args.export_backend_spec}")
+        return
+
+    if args.prepare_backend_packaging:
+        staging_root = prepare_backend_packaging_staging(args.prepare_backend_packaging, packaging_plan)
+        print(f"prepared_backend_packaging={staging_root}")
         return
 
     storage = Storage(args.db)
