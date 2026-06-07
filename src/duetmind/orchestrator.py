@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from duetmind.agents import AgentAdapter, build_default_agents
+from duetmind.exceptions import IntegrityViolationError
 from duetmind.fsm import CollisionInputs, FsmEvent, FsmState, resolve_collision_priority, resolve_phase_transition
 from duetmind.middleware import structural_delta_ratio
 from duetmind.moderator import HeuristicModerator, ModeratorAdapter
@@ -293,7 +294,11 @@ class Orchestrator:
                 or b_msg.telemetria.oom_flag
             )
 
-            integrity_ok = self.storage.verify_integrity(a_msg.grafo_estado)
+            try:
+                self.storage.assert_integrity(a_msg.grafo_estado)
+                integrity_ok = True
+            except IntegrityViolationError:
+                integrity_ok = False
 
             current_tokens = set(a_graph_text.lower().split())
             loop_flag = self._loop_detected(

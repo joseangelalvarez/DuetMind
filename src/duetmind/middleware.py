@@ -1,12 +1,34 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from typing import Any
+import subprocess
+from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
 
 from duetmind.models import AgentId, CompactAgentMessage
+
+
+def _micro_model_repair(candidate: str) -> str:
+    """Optional ephemeral repair hook via DUETMIND_JSON_REPAIR_CMD executable."""
+    command = os.getenv("DUETMIND_JSON_REPAIR_CMD", "").strip()
+    if not command:
+        return candidate
+    try:
+        completed = subprocess.run(
+            [command],
+            input=candidate,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except Exception:
+        return candidate
+    repaired = (completed.stdout or "").strip()
+    return repaired if repaired else candidate
 
 
 def _extract_json_block(raw_text: str) -> str:
@@ -99,6 +121,7 @@ def parse_with_layered_repair(
     phase_id: int = 0,
     iteration: int = 0,
     agent_id: AgentId | None = None,
+    layer3_repairer: Callable[[str], str] | None = None,
 ) -> BaseModel:
     # Layer 1: direct parse
     try:
@@ -118,7 +141,14 @@ def parse_with_layered_repair(
     except (ValidationError, ValueError, json.JSONDecodeError):
         pass
 
-    # Layer 3: lightweight sanitize fallback (still local in bootstrap)
+    # Layer 3: optional micro-model repair, then lightweight sanitize fallback.
+    repairer = layer3_repairer if callable(layer3_repairer) else _micro_model_repair
+    try:
+        micro_repaired = repairer(candidate)
+        return target_schema.model_validate_json(micro_repaired)
+    except (ValidationError, ValueError, json.JSONDecodeError):
+        pass
+
     try:
         sanitized = _sanitize_json(candidate)
         return target_schema.model_validate_json(sanitized)

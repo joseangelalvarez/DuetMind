@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 import sqlite3
 
+from duetmind.exceptions import IntegrityViolationError
 from duetmind.models import ControlSignal
 from duetmind.storage import Storage
 
@@ -158,6 +159,18 @@ class TestStorage(unittest.TestCase):
 
             mutated = {"component_a": "value2"}
             self.assertFalse(storage.verify_integrity(mutated))
+            storage.close()
+
+    def test_assert_integrity_raises_typed_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            storage = Storage(db_path)
+            storage.append_ledger(1, {"component_a": "value1"})
+
+            with self.assertRaises(IntegrityViolationError) as exc:
+                storage.assert_integrity({"component_a": "value2"})
+
+            self.assertEqual(exc.exception.component_id, "component_a")
             storage.close()
 
 

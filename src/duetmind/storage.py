@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import RLock, local
 from typing import Dict
 
+from duetmind.exceptions import IntegrityViolationError
 from duetmind.models import ControlSignal
 
 
@@ -531,7 +532,7 @@ class Storage:
             self._ledger_cache_run_id = self.run_id
         return block
 
-    def verify_integrity(self, manifest_propuesto: dict[str, str]) -> bool:
+    def assert_integrity(self, manifest_propuesto: dict[str, str]) -> None:
         consolidado = dict(self._ledger_cache) if self._ledger_cache_run_id == self.run_id else {}
         if not consolidado:
             rows = self._fetchall(
@@ -549,5 +550,11 @@ class Storage:
             if comp_id in consolidado:
                 proposed_hash = hashlib.sha256(str(comp_data).encode("utf-8")).hexdigest()
                 if consolidado[comp_id] != proposed_hash:
-                    return False
+                    raise IntegrityViolationError(comp_id, consolidado[comp_id], proposed_hash)
+
+    def verify_integrity(self, manifest_propuesto: dict[str, str]) -> bool:
+        try:
+            self.assert_integrity(manifest_propuesto)
+        except IntegrityViolationError:
+            return False
         return True

@@ -62,6 +62,16 @@ class TestMiddleware(unittest.TestCase):
         self.assertEqual(parsed.name, "o'hara")
         self.assertEqual(parsed.count, 7)
 
+    def test_layer3_micro_repair_callback_can_fix_payload(self) -> None:
+        raw = '{"name":"alpha","count":'
+
+        def repairer(_: str) -> str:
+            return '{"name":"alpha","count":9}'
+
+        parsed = parse_with_layered_repair(raw, Payload, layer3_repairer=repairer)
+        self.assertEqual(parsed.name, "alpha")
+        self.assertEqual(parsed.count, 9)
+
     def test_structural_delta_detects_change(self) -> None:
         prev = {"a": "1", "b": "2"}
         new = {"a": "1", "b": "3"}
