@@ -33,9 +33,20 @@ class HeuristicModerator:
         self.score_freeze_threshold = score_freeze_threshold
         self.score_converge_threshold = score_converge_threshold
 
+    _STRUCTURAL_PREFIXES = ("phase_", "intent_anchor", "__")
+
     @staticmethod
     def _graph_text(graph: dict[str, str]) -> str:
         return " ".join(f"{k}={v}" for k, v in sorted(graph.items()))
+
+    @classmethod
+    def _semantic_text(cls, graph: dict[str, str]) -> str:
+        values = [
+            value
+            for key, value in graph.items()
+            if not any(key.startswith(prefix) for prefix in cls._STRUCTURAL_PREFIXES)
+        ]
+        return " ".join(values) if values else " ".join(graph.values())
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
@@ -57,8 +68,8 @@ class HeuristicModerator:
         tokens_fase: int,
         token_budget: int,
     ) -> EvalResult:
-        a_tokens = self._tokenize(self._graph_text(a.grafo_estado))
-        b_tokens = self._tokenize(self._graph_text(b.grafo_estado))
+        a_tokens = self._tokenize(self._semantic_text(a.grafo_estado))
+        b_tokens = self._tokenize(self._semantic_text(b.grafo_estado))
         jsd = jensen_shannon_distance(a_tokens, b_tokens)
         agreement = max(0.0, 1.0 - jsd)
         stability = max(0.0, 1.0 - structural_delta_ratio(a.grafo_estado, b.grafo_estado))

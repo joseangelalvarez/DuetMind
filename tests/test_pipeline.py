@@ -171,8 +171,10 @@ class TestPipeline(unittest.TestCase):
             schedule = [PhaseSpec(13, "OutOfRange", "local", 1, "x")]
             runner = PipelineRunner(orch, schedule=schedule)
             try:
-                with self.assertRaises(ValueError):
-                    runner.run("demo")
+                result = runner.run("demo")
+                self.assertEqual(len(result.phase_results), 1)
+                self.assertEqual(result.final_signal, ControlSignal.ABORT.value)
+                self.assertEqual(result.phase_results[0][1].reason, "phase_id_out_of_bounds")
             finally:
                 storage.close()
 

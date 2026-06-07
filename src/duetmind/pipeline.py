@@ -81,13 +81,30 @@ class PipelineRunner:
         results: list[tuple[PhaseSpec, EvalResult]] = []
         for phase in self.schedule:
             if phase.phase_id > self.orchestrator.config.max_phase_id:
-                raise ValueError(f"phase_id {phase.phase_id} exceeds max_phase_id {self.orchestrator.config.max_phase_id}")
+                result = EvalResult(
+                    score=0.0,
+                    signal=ControlSignal.ABORT,
+                    reason="phase_id_out_of_bounds",
+                    bloqueantes=1,
+                )
+                results.append((phase, result))
+                self.orchestrator.storage.save_phase_result(
+                    phase.phase_id,
+                    phase.name,
+                    phase.environment,
+                    phase.model_tier,
+                    result.signal.value,
+                    result.score,
+                    result.reason,
+                )
+                break
             agent_a, agent_b = self.agent_resolver(phase)
             phase_orchestrator = Orchestrator(
                 self.orchestrator.storage,
                 config=replace(self.orchestrator.config, imax=phase.max_iterations),
                 agent_a=agent_a,
                 agent_b=agent_b,
+                moderator=self.orchestrator.moderator,
             )
             result = phase_orchestrator.run_phase(phase.phase_id, intent)
             results.append((phase, result))

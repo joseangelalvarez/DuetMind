@@ -54,6 +54,7 @@ class TestMiddleware(unittest.TestCase):
         )
         self.assertEqual(parsed.confianza, 0.0)
         self.assertEqual(parsed.grafo_estado.get("sentinel"), "parse_failure")
+        self.assertEqual(parsed.emisor, AgentId.A)
 
     def test_single_quote_inside_string_not_corrupted(self) -> None:
         raw = '{"name": "o\'hara", "count": 7}'

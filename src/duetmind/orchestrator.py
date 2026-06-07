@@ -181,6 +181,17 @@ class Orchestrator:
                 reason="short_circuit_loop_flag",
                 bloqueantes=1,
             )
+
+        if (
+            eval_input.a_msg.grafo_estado.get("sentinel") is not None
+            or eval_input.b_msg.grafo_estado.get("sentinel") is not None
+        ):
+            return EvalResult(
+                score=0.0,
+                signal=ControlSignal.ROLLBACK,
+                reason="short_circuit_sentinel",
+                bloqueantes=1,
+            )
         return self.moderator.arbitrate(
             eval_input.a_msg,
             eval_input.b_msg,
@@ -296,8 +307,13 @@ class Orchestrator:
                 self.config.delta_score_epsilon,
             )
 
-            semantic_text = self._semantic_values(a_msg.grafo_estado)
-            ds = cosine_distance_from_token_sets(semantic_text, user_intent)
+            is_sentinel = a_msg.grafo_estado.get("sentinel") is not None
+            if is_sentinel:
+                semantic_text = ""
+                ds = 0.0
+            else:
+                semantic_text = self._semantic_values(a_msg.grafo_estado)
+                ds = cosine_distance_from_token_sets(semantic_text, user_intent)
 
             collision = resolve_collision_priority(
                 CollisionInputs(

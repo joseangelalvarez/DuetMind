@@ -39,7 +39,7 @@ class TestStorage(unittest.TestCase):
             storage_run_2 = Storage(db_path, run_id="run-b")
             snapshot = storage_run_2.get_snapshot(2)
 
-            self.assertEqual(snapshot, {"v": "from-run-a"})
+            self.assertIsNone(snapshot)
             storage_run_1.close()
             storage_run_2.close()
 

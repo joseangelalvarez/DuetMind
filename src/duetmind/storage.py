@@ -235,22 +235,11 @@ class Storage:
                 """
                 SELECT manifest_json
                 FROM snapshots
-                WHERE phase_id = ? AND signal IN (?, ?)
-                ORDER BY attempt DESC, created_at DESC
+                WHERE phase_id = ? AND run_id = ?
+                ORDER BY attempt DESC
                 LIMIT 1
                 """,
-                (phase_id, go_signals[0], go_signals[1]),
-            )
-        if row is None:
-            row = self._fetchone(
-                """
-                SELECT manifest_json
-                FROM snapshots
-                WHERE phase_id = ?
-                ORDER BY attempt DESC, created_at DESC
-                LIMIT 1
-                """,
-                (phase_id,),
+                (phase_id, effective_run),
             )
         return json.loads(row[0]) if row else None
 

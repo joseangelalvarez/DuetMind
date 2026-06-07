@@ -12,7 +12,7 @@ class FsmState(str, Enum):
     CLOUD_ESC = "ESCALADO_NUBE_EMERGENCIA"
     FREEZE = "FASE_CONGELADA"
     RESET = "REINICIO"
-    ABORT = "ESCALA"
+    ABORT = "ESCALAR_A_HUMANO"
 
 
 class FsmEvent(str, Enum):

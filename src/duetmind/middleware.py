@@ -65,7 +65,7 @@ def _build_sentinel_compact_message(
     iteration: int,
     agent_id: AgentId | None,
 ) -> CompactAgentMessage:
-    emitter = agent_id if agent_id is not None else AgentId.M
+    emitter = agent_id if agent_id is not None else AgentId.A
     return CompactAgentMessage.model_validate(
         {
             "fase_id": max(1, phase_id),
