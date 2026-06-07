@@ -5,6 +5,7 @@ import json
 
 from duetmind.analysis import assess_go_no_go
 from duetmind.agents import build_default_agents, build_provider_agents
+from duetmind.distribution import DistributionPlatform, build_distribution_manifest, prepare_distribution_staging, write_distribution_manifest
 from duetmind.pipeline import PipelineRunner
 from duetmind.orchestrator import Orchestrator
 from duetmind.server import serve_audit_api
@@ -30,6 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--export-bundle", type=str, default=None)
     parser.add_argument("--telemetry-summary", action="store_true")
     parser.add_argument("--go-no-go", action="store_true")
+    parser.add_argument("--export-distribution-manifest", type=str, default=None)
+    parser.add_argument("--prepare-distribution", type=str, default=None)
+    parser.add_argument(
+        "--distribution-platform",
+        type=str,
+        choices=("windows", "linux"),
+        default="windows",
+    )
     parser.add_argument("--serve-http", action="store_true")
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
@@ -46,6 +55,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    distribution_platform = DistributionPlatform(args.distribution_platform)
+    distribution_manifest = build_distribution_manifest(distribution_platform)
+
+    if args.export_distribution_manifest:
+        write_distribution_manifest(args.export_distribution_manifest, distribution_manifest)
+        print(f"exported_distribution_manifest={args.export_distribution_manifest}")
+        return
+
+    if args.prepare_distribution:
+        staging_root = prepare_distribution_staging(args.prepare_distribution, distribution_manifest)
+        print(f"prepared_distribution={staging_root}")
+        return
+
     storage = Storage(args.db)
     if args.agent_mode == "provider":
         agent_a, agent_b = build_provider_agents()
@@ -54,6 +76,7 @@ def main() -> None:
     orch = Orchestrator(storage, agent_a=agent_a, agent_b=agent_b)
 
     print("=== DuetMind Result ===")
+
     if args.export_history:
         storage.export_phase_results_json(
             args.export_history,

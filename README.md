@@ -52,6 +52,21 @@ python -m duetmind.main --export-bundle audit.json
 python -m duetmind.main --telemetry-summary
 ```
 
+## Preparar distribucion
+
+```powershell
+python -m duetmind.main --export-distribution-manifest distribution-manifest.json
+python -m duetmind.main --prepare-distribution staging
+```
+
+Por defecto se genera un layout objetivo para Windows. Para Linux:
+
+```powershell
+python -m duetmind.main --prepare-distribution staging-linux --distribution-platform linux
+```
+
+Eso crea un staging autocontenido con `launcher-config.json`, `distribution-manifest.json` y la arbolizacion base para `resources/`, `engines/`, `models/` y `workspace/`.
+
 HTTP export bundle:
 
 ```powershell

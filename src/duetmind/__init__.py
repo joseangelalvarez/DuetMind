@@ -6,6 +6,7 @@ __all__ = [
     "infra",
     "exceptions",
     "semantic",
+    "distribution",
     "storage",
     "scoring",
     "moderator",
