@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 from duetmind.agents import AgentAdapter, build_default_agents
-from duetmind.fsm import CollisionInputs, FsmState, resolve_collision_priority
+from duetmind.fsm import CollisionInputs, FsmEvent, FsmState, resolve_collision_priority, resolve_phase_transition
 from duetmind.middleware import structural_delta_ratio
 from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, EvalResult, TelemetryCycle
 from duetmind.scoring import compute_score, cosine_distance_from_token_sets, jaccard_similarity, jensen_shannon_distance
@@ -17,6 +18,7 @@ class RuntimeConfig:
     tmax_ms: int = 45000
     ds_critical: float = 0.35
     loop_jaccard_threshold: float = 0.92
+    loop_detection_window: int = 3
     delta_score_epsilon: float = 0.02
     semantic_delta_threshold: float = 0.01
     token_budget_per_phase: int = 12000
@@ -173,6 +175,28 @@ class Orchestrator:
 
         return EvalResult(score=score, signal=signal, reason="score_eval", bloqueantes=blocking_alerts)
 
+    @staticmethod
+    def _loop_detected(
+        current_tokens: set[str],
+        token_history: deque[set[str]],
+        loop_jaccard_threshold: float,
+        score_was_computed: bool,
+        previous_score_available: bool,
+        last_score: float,
+        prev_last_score: float,
+        delta_score_epsilon: float,
+    ) -> bool:
+        periodic_loop = any(
+            jaccard_similarity(current_tokens, past_tokens) > loop_jaccard_threshold
+            for past_tokens in token_history
+        )
+        return (
+            periodic_loop
+            and score_was_computed
+            and previous_score_available
+            and abs(last_score - prev_last_score) <= delta_score_epsilon
+        )
+
     def run_phase(self, phase_id: int, user_intent: str, *, require_prerequisite: bool = True) -> EvalResult:
         if phase_id < 1 or phase_id > self.config.max_phase_id:
             return EvalResult(
@@ -192,9 +216,11 @@ class Orchestrator:
         prev_snapshot = self.storage.get_snapshot(phase_id - 1) or {"intent": user_intent}
         prev_snapshot.setdefault("intent", user_intent)
         prev_graph = prev_snapshot
-        prev_prev_tokens: set[str] = set()
-        prev_tokens: set[str] = set(self._graph_text(prev_graph).lower().split())
+        token_history: deque[set[str]] = deque(maxlen=max(1, self.config.loop_detection_window))
         last_score = 0.0
+        prev_last_score = 0.0
+        score_was_computed = False
+        previous_score_available = False
         tokens_fase = 0
         rollback_count = 0
 
@@ -242,8 +268,16 @@ class Orchestrator:
             integrity_ok = self.storage.verify_integrity(a_msg.grafo_estado)
 
             current_tokens = set(a_graph_text.lower().split())
-            loop_jaccard = jaccard_similarity(current_tokens, prev_prev_tokens) if prev_prev_tokens else 0.0
-            loop_flag = loop_jaccard > self.config.loop_jaccard_threshold and abs(last_score - 0.0) <= self.config.delta_score_epsilon
+            loop_flag = self._loop_detected(
+                current_tokens,
+                token_history,
+                self.config.loop_jaccard_threshold,
+                score_was_computed,
+                previous_score_available,
+                last_score,
+                prev_last_score,
+                self.config.delta_score_epsilon,
+            )
 
             semantic_text = self._semantic_values(a_msg.grafo_estado)
             ds = cosine_distance_from_token_sets(semantic_text, user_intent)
@@ -308,6 +342,15 @@ class Orchestrator:
                     eval_result.score,
                     eval_result.signal.value,
                 )
+                next_state = resolve_phase_transition(FsmState.FREEZE, FsmEvent.PHASE_END)
+                if next_state is not None:
+                    self.storage.append_telemetry(
+                        phase_id,
+                        iteration,
+                        next_state.value,
+                        eval_result.score,
+                        FsmEvent.PHASE_END.value,
+                    )
                 return eval_result
 
             if eval_result.signal == ControlSignal.ROLLBACK:
@@ -327,9 +370,12 @@ class Orchestrator:
                         bloqueantes=1,
                     )
 
+            if score_was_computed:
+                prev_last_score = last_score
+                previous_score_available = True
             last_score = eval_result.score
-            prev_prev_tokens = prev_tokens
-            prev_tokens = current_tokens
+            score_was_computed = True
+            token_history.append(current_tokens)
             prev_graph = a_msg.grafo_estado
 
         return EvalResult(

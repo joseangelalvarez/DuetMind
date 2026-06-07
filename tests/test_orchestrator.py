@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from collections import deque
 from pathlib import Path
 
 from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, DefensiveAlert, EvalInput, TelemetryCycle
@@ -46,6 +47,74 @@ def build_message(
 
 
 class TestOrchestrator(unittest.TestCase):
+    def test_no_loop_flag_in_iteration_1(self) -> None:
+        loop_flag = Orchestrator._loop_detected(
+            current_tokens={"alpha"},
+            token_history=deque(maxlen=3),
+            loop_jaccard_threshold=0.92,
+            score_was_computed=False,
+            previous_score_available=False,
+            last_score=0.0,
+            prev_last_score=0.0,
+            delta_score_epsilon=0.02,
+        )
+        self.assertFalse(loop_flag)
+
+    def test_loop_flag_requires_score_computed(self) -> None:
+        loop_flag = Orchestrator._loop_detected(
+            current_tokens={"alpha"},
+            token_history=deque([{"alpha"}], maxlen=3),
+            loop_jaccard_threshold=0.92,
+            score_was_computed=False,
+            previous_score_available=True,
+            last_score=0.8,
+            prev_last_score=0.79,
+            delta_score_epsilon=0.02,
+        )
+        self.assertFalse(loop_flag)
+
+    def test_loop_period_2_detected(self) -> None:
+        history = deque([{"a"}, {"b"}, {"a"}], maxlen=3)
+        loop_flag = Orchestrator._loop_detected(
+            current_tokens={"b"},
+            token_history=history,
+            loop_jaccard_threshold=0.92,
+            score_was_computed=True,
+            previous_score_available=True,
+            last_score=0.5,
+            prev_last_score=0.5,
+            delta_score_epsilon=0.02,
+        )
+        self.assertTrue(loop_flag)
+
+    def test_loop_period_3_detected(self) -> None:
+        history = deque([{"a"}, {"b"}, {"c"}], maxlen=3)
+        loop_flag = Orchestrator._loop_detected(
+            current_tokens={"a"},
+            token_history=history,
+            loop_jaccard_threshold=0.92,
+            score_was_computed=True,
+            previous_score_available=True,
+            last_score=0.5,
+            prev_last_score=0.5,
+            delta_score_epsilon=0.02,
+        )
+        self.assertTrue(loop_flag)
+
+    def test_no_false_positive_on_vocabulary_variation(self) -> None:
+        history = deque([{"a", "b", "d"}], maxlen=3)
+        loop_flag = Orchestrator._loop_detected(
+            current_tokens={"a", "b", "c"},
+            token_history=history,
+            loop_jaccard_threshold=0.92,
+            score_was_computed=True,
+            previous_score_available=True,
+            last_score=0.5,
+            prev_last_score=0.5,
+            delta_score_epsilon=0.02,
+        )
+        self.assertFalse(loop_flag)
+
     def test_run_phase_blocked_without_prerequisite_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             storage = Storage(Path(tmp) / "test.db")

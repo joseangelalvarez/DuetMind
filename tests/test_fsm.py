@@ -1,9 +1,13 @@
 import unittest
 
-from duetmind.fsm import CollisionInputs, FsmState, resolve_collision_priority
+from duetmind.fsm import FsmEvent, CollisionInputs, FsmState, resolve_collision_priority, resolve_phase_transition
 
 
 class TestFSM(unittest.TestCase):
+    def test_freeze_to_init_transition_defined(self) -> None:
+        next_state = resolve_phase_transition(FsmState.FREEZE, FsmEvent.PHASE_END)
+        self.assertEqual(next_state, FsmState.INIT)
+
     def test_timeout_has_priority(self) -> None:
         decision = resolve_collision_priority(CollisionInputs(timeout_or_oom=True))
         self.assertIsNotNone(decision)

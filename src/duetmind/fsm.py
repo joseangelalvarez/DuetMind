@@ -15,6 +15,10 @@ class FsmState(str, Enum):
     ABORT = "ESCALA"
 
 
+class FsmEvent(str, Enum):
+    PHASE_END = "phase_end"
+
+
 @dataclass
 class TransitionDecision:
     next_state: FsmState
@@ -38,4 +42,11 @@ def resolve_collision_priority(ci: CollisionInputs) -> TransitionDecision | None
         return TransitionDecision(FsmState.RESET, "deriva_semantica_critica")
     if ci.loop_flag:
         return TransitionDecision(FsmState.ROLLBACK, "estancamiento_circular")
+    return None
+
+
+def resolve_phase_transition(state: FsmState, event: FsmEvent) -> FsmState | None:
+    # FREEZE is terminal only for the current phase; system-level execution returns to INIT.
+    if state == FsmState.FREEZE and event == FsmEvent.PHASE_END:
+        return FsmState.INIT
     return None
