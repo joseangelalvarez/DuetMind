@@ -164,6 +164,18 @@ class TestPipeline(unittest.TestCase):
             finally:
                 storage.close()
 
+    def test_pipeline_rejects_phase_id_above_max_phase_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage)
+            schedule = [PhaseSpec(13, "OutOfRange", "local", 1, "x")]
+            runner = PipelineRunner(orch, schedule=schedule)
+            try:
+                with self.assertRaises(ValueError):
+                    runner.run("demo")
+            finally:
+                storage.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ from duetmind.storage import Storage
 @dataclass
 class RuntimeConfig:
     imax: int = 4
+    max_phase_id: int = 12
     tmax_ms: int = 45000
     ds_critical: float = 0.35
     loop_jaccard_threshold: float = 0.92
@@ -173,6 +174,13 @@ class Orchestrator:
         return EvalResult(score=score, signal=signal, reason="score_eval", bloqueantes=blocking_alerts)
 
     def run_phase(self, phase_id: int, user_intent: str) -> EvalResult:
+        if phase_id < 1 or phase_id > self.config.max_phase_id:
+            return EvalResult(
+                score=0.0,
+                signal=ControlSignal.ABORT,
+                reason="phase_id_out_of_bounds",
+                bloqueantes=1,
+            )
         state = FsmState.INIT
         prev_snapshot = self.storage.get_snapshot(phase_id - 1) or {"intent": user_intent}
         prev_snapshot.setdefault("intent", user_intent)

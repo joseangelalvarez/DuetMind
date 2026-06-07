@@ -6,6 +6,41 @@ from duetmind.storage import Storage
 
 
 class TestStorage(unittest.TestCase):
+    def test_run_id_isolation_prevents_cross_run_abort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            storage_run_1 = Storage(db_path, run_id="run-1")
+            storage_run_1.append_ledger(1, {"component_a": "value1"})
+
+            storage_run_2 = Storage(db_path, run_id="run-2")
+            self.assertTrue(storage_run_2.verify_integrity({"component_a": "value2"}))
+
+            storage_run_1.close()
+            storage_run_2.close()
+
+    def test_genesis_block_included_in_all_run_verifications(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            storage_run_1 = Storage(db_path, run_id="run-1")
+            storage_run_2 = Storage(db_path, run_id="run-2")
+
+            self.assertFalse(storage_run_2.verify_integrity({"__schema_version__": "2"}))
+
+            storage_run_1.close()
+            storage_run_2.close()
+
+    def test_different_intents_same_schema_no_integrity_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            storage_run_1 = Storage(db_path, run_id="run-a")
+            storage_run_1.append_ledger(1, {"architecture": "intent_alpha"})
+
+            storage_run_2 = Storage(db_path, run_id="run-b")
+            self.assertTrue(storage_run_2.verify_integrity({"architecture": "intent_beta"}))
+
+            storage_run_1.close()
+            storage_run_2.close()
+
     def test_genesis_block_inserted_on_init(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             storage = Storage(Path(tmp) / "test.db")

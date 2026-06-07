@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from duetmind.middleware import parse_with_layered_repair
-from duetmind.models import AgentId, CompactAgentMessage, TelemetryCycle
+from duetmind.models import AgentId, CompactAgentMessage, DefensiveAlert, TelemetryCycle
 from duetmind.providers import InferenceProvider, ProviderRequest
 from duetmind.prompts import PromptLibrary
 
@@ -36,17 +36,18 @@ def compact_graph_state(
     proposal_suffix: str,
     agent_id: AgentId,
     user_intent: str,
-) -> dict[str, str]:
+) -> tuple[dict[str, str], int]:
     prefix = f"phase_{phase_id}_iter_"
     compacted = {
         key: value
         for key, value in prev_graph.items()
         if key == "intent_anchor" or key.startswith(prefix)
     }
+    discarded_count = len(prev_graph) - len(compacted)
     compacted[f"phase_{phase_id}_iter_{iteration}"] = proposal_suffix
     compacted[f"phase_{phase_id}_iter_{iteration}_{agent_id.value}"] = proposal_suffix
     compacted["intent_anchor"] = user_intent
-    return compacted
+    return compacted, discarded_count
 
 
 class MockAgentAdapter:
@@ -61,7 +62,7 @@ class MockAgentAdapter:
         prev_graph: dict[str, str],
         user_intent: str,
     ) -> CompactAgentMessage:
-        graph = compact_graph_state(
+        graph, _ = compact_graph_state(
             prev_graph,
             phase_id,
             iteration,
@@ -103,7 +104,7 @@ class ProviderAgentAdapter:
         prev_graph: dict[str, str],
         user_intent: str,
     ) -> CompactAgentMessage:
-        prompt_text = self.prompt_library.render(phase_id, user_intent)
+        prompt_text = self.prompt_library.render(phase_id, user_intent, self.agent_id)
         request = ProviderRequest(
             phase_id=phase_id,
             iteration=iteration,
@@ -120,8 +121,9 @@ class ProviderAgentAdapter:
         )
         if message.emisor != self.agent_id:
             message.emisor = self.agent_id
+        discarded_count = 0
         if not message.grafo_estado:
-            message.grafo_estado = compact_graph_state(
+            message.grafo_estado, discarded_count = compact_graph_state(
                 prev_graph,
                 phase_id,
                 iteration,
@@ -130,7 +132,7 @@ class ProviderAgentAdapter:
                 user_intent,
             )
         else:
-            message.grafo_estado = compact_graph_state(
+            message.grafo_estado, discarded_count = compact_graph_state(
                 message.grafo_estado,
                 phase_id,
                 iteration,
@@ -139,6 +141,15 @@ class ProviderAgentAdapter:
                 user_intent,
             )
         message.grafo_estado.setdefault("intent_anchor", user_intent)
+        if discarded_count > 0:
+            message.alertas.append(
+                DefensiveAlert(
+                    componente_id="agent_compaction",
+                    invariante_violada="keys_discarded_from_llm_output",
+                    gravedad_score=1,
+                    es_bloqueante=False,
+                )
+            )
         return message
 
 

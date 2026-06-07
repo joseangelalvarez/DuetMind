@@ -37,7 +37,7 @@ class DefensiveAlert(BaseModel):
 
 
 class CompactAgentMessage(BaseModel):
-    fase_id: int = Field(ge=1, le=12)
+    fase_id: int = Field(ge=1)
     iteracion: int = Field(ge=1)
     emisor: AgentId
     grafo_estado: Dict[str, str]

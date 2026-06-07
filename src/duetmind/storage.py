@@ -17,6 +17,7 @@ class LedgerBlock:
     id_bloque: str
     timestamp: float
     fase_id: int
+    run_id: str
     hash_manifiesto: str
     hash_anterior: str
     tabla_dependencias: Dict[str, str]
@@ -25,11 +26,13 @@ class LedgerBlock:
 class Storage:
     _VOLATILE_COMPONENT_KEYS = {"intent_anchor"}
 
-    def __init__(self, db_path: str | Path = "duetmind.db") -> None:
+    def __init__(self, db_path: str | Path = "duetmind.db", run_id: str = "") -> None:
         self.db_path = str(db_path)
+        self.run_id = run_id or str(uuid.uuid4())
         self._thread_local = local()
         self._lock = RLock()
         self._ledger_cache: Dict[str, str] = {}
+        self._ledger_cache_run_id = ""
         self._finalizer = weakref.finalize(self, Storage._finalize_connection, self._thread_local)
         self._init_db()
         self._init_genesis_block()
@@ -105,6 +108,7 @@ class Storage:
                 CREATE TABLE IF NOT EXISTS ledger (
                     id_bloque TEXT PRIMARY KEY,
                     phase_id INTEGER NOT NULL,
+                    run_id TEXT NOT NULL DEFAULT '',
                     hash_manifiesto TEXT NOT NULL,
                     hash_anterior TEXT NOT NULL,
                     tabla_dependencias_json TEXT NOT NULL,
@@ -129,14 +133,25 @@ class Storage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_phase_id ON telemetry(phase_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_created_at ON telemetry(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_phase_id ON ledger(phase_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_run_id ON ledger(run_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_created_at ON ledger(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_environment ON phase_results(environment)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_created_at ON phase_results(created_at)")
             conn.commit()
 
+        self._ensure_ledger_run_id_column()
+
+    def _ensure_ledger_run_id_column(self) -> None:
+        row = self._fetchone("SELECT COUNT(*) FROM pragma_table_info('ledger') WHERE name = 'run_id'")
+        has_run_id = int(row[0]) > 0 if row else False
+        if has_run_id:
+            return
+        self._execute("ALTER TABLE ledger ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
+        self._execute("CREATE INDEX IF NOT EXISTS idx_ledger_run_id ON ledger(run_id)")
+
     def _init_genesis_block(self) -> None:
-        existing = self._fetchone("SELECT 1 FROM ledger WHERE phase_id = 0 LIMIT 1")
+        existing = self._fetchone("SELECT 1 FROM ledger WHERE phase_id = 0 AND run_id = '' LIMIT 1")
         if existing is None:
             genesis_manifest = {
                 "__genesis__": "duetmind_v0",
@@ -146,11 +161,12 @@ class Storage:
             return
 
         if not self._ledger_cache:
-            rows = self._fetchall("SELECT tabla_dependencias_json FROM ledger WHERE phase_id = 0")
+            rows = self._fetchall("SELECT tabla_dependencias_json FROM ledger WHERE phase_id = 0 AND run_id = ''")
             cache: Dict[str, str] = {}
             for row in rows:
                 cache.update(json.loads(row[0]))
             self._ledger_cache = cache
+            self._ledger_cache_run_id = self.run_id
 
     def get_snapshot(self, phase_id: int) -> dict[str, str] | None:
         row = self._fetchone("SELECT manifest_json FROM snapshots WHERE phase_id = ?", (phase_id,))
@@ -370,7 +386,16 @@ class Storage:
             json.dump(bundle, handle, indent=2, sort_keys=True)
 
     def _get_last_ledger_hash(self) -> str:
-        row = self._fetchone("SELECT hash_manifiesto FROM ledger ORDER BY created_at DESC LIMIT 1")
+        row = self._fetchone(
+            """
+            SELECT hash_manifiesto
+            FROM ledger
+            WHERE run_id IN ('', ?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (self.run_id,),
+        )
         return row[0] if row else "0" * 64
 
     def append_ledger(self, phase_id: int, manifest: dict[str, str]) -> LedgerBlock:
@@ -378,6 +403,7 @@ class Storage:
         hash_actual = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         with self._lock:
             hash_anterior = self._get_last_ledger_hash()
+        effective_run_id = "" if phase_id == 0 else self.run_id
 
         deps: Dict[str, str] = {
             comp_id: hashlib.sha256(str(comp_data).encode("utf-8")).hexdigest()
@@ -389,6 +415,7 @@ class Storage:
             id_bloque=str(uuid.uuid4()),
             timestamp=time.time(),
             fase_id=phase_id,
+            run_id=effective_run_id,
             hash_manifiesto=hash_actual,
             hash_anterior=hash_anterior,
             tabla_dependencias=deps,
@@ -397,29 +424,36 @@ class Storage:
         self._execute(
             """
             INSERT INTO ledger(
-                id_bloque, phase_id, hash_manifiesto, hash_anterior,
+                id_bloque, phase_id, run_id, hash_manifiesto, hash_anterior,
                 tabla_dependencias_json, created_at
-            ) VALUES(?, ?, ?, ?, ?, ?)
+            ) VALUES(?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 block.id_bloque,
                 block.fase_id,
+                block.run_id,
                 block.hash_manifiesto,
                 block.hash_anterior,
                 json.dumps(block.tabla_dependencias, sort_keys=True),
                 block.timestamp,
             ),
         )
-        self._ledger_cache.update(block.tabla_dependencias)
+        if effective_run_id in {"", self.run_id}:
+            self._ledger_cache.update(block.tabla_dependencias)
+            self._ledger_cache_run_id = self.run_id
         return block
 
     def verify_integrity(self, manifest_propuesto: dict[str, str]) -> bool:
-        consolidado = dict(self._ledger_cache)
+        consolidado = dict(self._ledger_cache) if self._ledger_cache_run_id == self.run_id else {}
         if not consolidado:
-            rows = self._fetchall("SELECT tabla_dependencias_json FROM ledger")
+            rows = self._fetchall(
+                "SELECT tabla_dependencias_json FROM ledger WHERE run_id IN ('', ?)",
+                (self.run_id,),
+            )
             for row in rows:
                 consolidado.update(json.loads(row[0]))
             self._ledger_cache = consolidado
+            self._ledger_cache_run_id = self.run_id
 
         for comp_id, comp_data in manifest_propuesto.items():
             if comp_id in self._VOLATILE_COMPONENT_KEYS:

@@ -80,6 +80,8 @@ class PipelineRunner:
     def run(self, intent: str) -> PipelineResult:
         results: list[tuple[PhaseSpec, EvalResult]] = []
         for phase in self.schedule:
+            if phase.phase_id > self.orchestrator.config.max_phase_id:
+                raise ValueError(f"phase_id {phase.phase_id} exceeds max_phase_id {self.orchestrator.config.max_phase_id}")
             agent_a, agent_b = self.agent_resolver(phase)
             phase_orchestrator = Orchestrator(
                 self.orchestrator.storage,

@@ -98,6 +98,15 @@ class TestOrchestrator(unittest.TestCase):
             finally:
                 storage.close()
 
+    def test_phase_id_above_12_rejected_at_runtime_not_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage)
+            result = orch.run_phase(13, "demo")
+            self.assertEqual(result.signal, ControlSignal.ABORT)
+            self.assertEqual(result.reason, "phase_id_out_of_bounds")
+            storage.close()
+
     def test_agreement_is_one_when_agents_produce_identical_output(self) -> None:
         a = build_message(agent_id=AgentId.A, graph={"semantic": "same same"})
         b = build_message(agent_id=AgentId.B, graph={"semantic": "same same"})
