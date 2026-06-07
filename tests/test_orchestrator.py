@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import time
 import unittest
@@ -86,6 +87,21 @@ def build_message(
 
 
 class TestOrchestrator(unittest.TestCase):
+    def test_run_phase_works_inside_async_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            orch = Orchestrator(storage)
+
+            async def _invoke() -> ControlSignal:
+                result = orch.run_phase(1, "demo")
+                return result.signal
+
+            try:
+                signal = asyncio.run(_invoke())
+                self.assertIsInstance(signal, ControlSignal)
+            finally:
+                storage.close()
+
     def test_heuristic_moderator_produces_valid_eval_result(self) -> None:
         moderator = HeuristicModerator()
         a = build_message(agent_id=AgentId.A, graph={"semantic": "same"})

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from duetmind.agents import MockAgentAdapter, ProviderAgentAdapter
-from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, TelemetryCycle
+from duetmind.models import AgentId, CompactAgentMessage, ControlSignal, EvalResult, TelemetryCycle
 from duetmind.orchestrator import Orchestrator
 from duetmind.pipeline import PipelineRunner, PhaseSpec
 from duetmind.storage import Storage
@@ -48,7 +48,39 @@ class StaticAgent:
         )
 
 
+class CountingModerator:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def arbitrate(self, a, b, phase_id, iteration, tokens_fase, token_budget):
+        self.calls += 1
+        return EvalResult(score=6.5, signal=ControlSignal.CONVERGE_CONDITIONAL, reason="counting", bloqueantes=0)
+
+
 class TestPipeline(unittest.TestCase):
+    def test_pipeline_propagates_configured_moderator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(Path(tmp) / "test.db")
+            moderator = CountingModerator()
+            orch = Orchestrator(storage, moderator=moderator)
+            schedule = [PhaseSpec(1, "Custom", "local", 1, "x")]
+
+            def resolver(_: PhaseSpec):
+                return (
+                    StaticAgent(agent_id=AgentId.A, graph={"semantic": "demo"}, confidence=0.8),
+                    StaticAgent(agent_id=AgentId.B, graph={"semantic": "demo"}, confidence=0.8),
+                )
+
+            runner = PipelineRunner(orch, schedule=schedule, agent_resolver=resolver)
+
+            try:
+                result = runner.run("demo")
+
+                self.assertEqual(len(result.phase_results), 1)
+                self.assertGreater(moderator.calls, 0)
+            finally:
+                storage.close()
+
     def test_default_agent_resolver_is_hybrid(self) -> None:
         cloud_phase = PhaseSpec(1, "Concepcion", "cloud", 4, "advanced")
         local_phase = PhaseSpec(5, "Arquitectura", "local", 4, "quantized")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import concurrent.futures
 from collections import deque
 from dataclasses import dataclass
 
@@ -132,12 +132,12 @@ class Orchestrator:
         user_intent: str,
         agent_id: AgentId,
     ) -> CompactAgentMessage:
-        async def _run_generate() -> CompactAgentMessage:
-            return await asyncio.to_thread(agent.generate, phase_id, iteration, prev_graph, user_intent)
-
+        timeout_s = self.config.tmax_ms / 1000.0
         try:
-            return asyncio.run(asyncio.wait_for(_run_generate(), timeout=self.config.tmax_ms / 1000.0))
-        except (asyncio.TimeoutError, TimeoutError):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(agent.generate, phase_id, iteration, prev_graph, user_intent)
+                return future.result(timeout=timeout_s)
+        except concurrent.futures.TimeoutError:
             self.storage.append_telemetry(
                 phase_id,
                 iteration,
