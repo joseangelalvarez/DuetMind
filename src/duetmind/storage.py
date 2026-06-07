@@ -139,11 +139,7 @@ class Storage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_phase_id ON telemetry(phase_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_created_at ON telemetry(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_phase_id ON ledger(phase_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_run_id ON ledger(run_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_created_at ON ledger(created_at)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_phase_run ON snapshots(phase_id, run_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_signal ON snapshots(signal)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_environment ON phase_results(environment)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_phase_results_created_at ON phase_results(created_at)")
             conn.commit()
@@ -154,9 +150,8 @@ class Storage:
     def _ensure_ledger_run_id_column(self) -> None:
         row = self._fetchone("SELECT COUNT(*) FROM pragma_table_info('ledger') WHERE name = 'run_id'")
         has_run_id = int(row[0]) > 0 if row else False
-        if has_run_id:
-            return
-        self._execute("ALTER TABLE ledger ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
+        if not has_run_id:
+            self._execute("ALTER TABLE ledger ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
         self._execute("CREATE INDEX IF NOT EXISTS idx_ledger_run_id ON ledger(run_id)")
 
     def _ensure_snapshot_columns(self) -> None:
@@ -179,6 +174,9 @@ class Storage:
             ON snapshots(phase_id, run_id, attempt)
             """
         )
+        self._execute("CREATE INDEX IF NOT EXISTS idx_snapshots_phase_run ON snapshots(phase_id, run_id)")
+        self._execute("CREATE INDEX IF NOT EXISTS idx_snapshots_signal ON snapshots(signal)")
+        self._execute("CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at)")
 
     def _init_genesis_block(self) -> None:
         existing = self._fetchone("SELECT 1 FROM ledger WHERE phase_id = 0 AND run_id = '' LIMIT 1")

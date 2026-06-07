@@ -1,12 +1,49 @@
 import tempfile
 import unittest
 from pathlib import Path
+import sqlite3
 
 from duetmind.models import ControlSignal
 from duetmind.storage import Storage
 
 
 class TestStorage(unittest.TestCase):
+    def test_init_migrates_legacy_schema_before_creating_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "legacy.db"
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                """
+                CREATE TABLE ledger (
+                    id_bloque TEXT PRIMARY KEY,
+                    phase_id INTEGER NOT NULL,
+                    hash_manifiesto TEXT NOT NULL,
+                    hash_anterior TEXT NOT NULL,
+                    tabla_dependencias_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE snapshots (
+                    phase_id INTEGER NOT NULL,
+                    manifest_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.commit()
+            conn.close()
+
+            storage = Storage(db_path, run_id="run-legacy")
+            manifest = {"component_a": "value"}
+            storage.append_ledger(1, manifest)
+            storage.save_snapshot(1, manifest, signal=ControlSignal.FREEZE_ADVANCE.value)
+
+            self.assertIsNotNone(storage.get_snapshot(1))
+            storage.close()
+
     def test_snapshot_versioned_by_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             storage = Storage(Path(tmp) / "test.db", run_id="run-1")
