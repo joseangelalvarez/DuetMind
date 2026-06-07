@@ -1,0 +1,367 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict
+
+
+@dataclass
+class LedgerBlock:
+    id_bloque: str
+    timestamp: float
+    fase_id: int
+    hash_manifiesto: str
+    hash_anterior: str
+    tabla_dependencias: Dict[str, str]
+
+
+class Storage:
+    def __init__(self, db_path: str | Path = "duetmind.db") -> None:
+        self.db_path = str(db_path)
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.db_path)
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS snapshots (
+                    phase_id INTEGER PRIMARY KEY,
+                    manifest_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telemetry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    phase_id INTEGER NOT NULL,
+                    iteration INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    score REAL,
+                    reason TEXT,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ledger (
+                    id_bloque TEXT PRIMARY KEY,
+                    phase_id INTEGER NOT NULL,
+                    hash_manifiesto TEXT NOT NULL,
+                    hash_anterior TEXT NOT NULL,
+                    tabla_dependencias_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS phase_results (
+                    phase_id INTEGER PRIMARY KEY,
+                    phase_name TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    model_tier TEXT NOT NULL,
+                    signal TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+
+    def get_snapshot(self, phase_id: int) -> dict[str, str] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT manifest_json FROM snapshots WHERE phase_id = ?", (phase_id,)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_snapshot(self, phase_id: int, manifest: dict[str, str]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO snapshots(phase_id, manifest_json, created_at)
+                VALUES(?, ?, ?)
+                ON CONFLICT(phase_id) DO UPDATE SET
+                    manifest_json = excluded.manifest_json,
+                    created_at = excluded.created_at
+                """,
+                (phase_id, json.dumps(manifest, sort_keys=True), time.time()),
+            )
+
+    def append_telemetry(
+        self,
+        phase_id: int,
+        iteration: int,
+        state: str,
+        score: float | None,
+        reason: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO telemetry(phase_id, iteration, state, score, reason, created_at)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (phase_id, iteration, state, score, reason, time.time()),
+            )
+
+    def save_phase_result(
+        self,
+        phase_id: int,
+        phase_name: str,
+        environment: str,
+        model_tier: str,
+        signal: str,
+        score: float,
+        reason: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO phase_results(
+                    phase_id, phase_name, environment, model_tier,
+                    signal, score, reason, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(phase_id) DO UPDATE SET
+                    phase_name = excluded.phase_name,
+                    environment = excluded.environment,
+                    model_tier = excluded.model_tier,
+                    signal = excluded.signal,
+                    score = excluded.score,
+                    reason = excluded.reason,
+                    created_at = excluded.created_at
+                """,
+                (
+                    phase_id,
+                    phase_name,
+                    environment,
+                    model_tier,
+                    signal,
+                    score,
+                    reason,
+                    time.time(),
+                ),
+            )
+
+    def list_phase_results(
+        self,
+        phase_id: int | None = None,
+        environment: str | None = None,
+    ) -> list[dict[str, str | float | int]]:
+        clauses = []
+        params: list[str | int] = []
+        if phase_id is not None:
+            clauses.append("phase_id = ?")
+            params.append(phase_id)
+        if environment is not None:
+            clauses.append("environment = ?")
+            params.append(environment)
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT phase_id, phase_name, environment, model_tier, signal, score, reason
+                FROM phase_results
+                {where_sql}
+                ORDER BY phase_id
+                """,
+                params,
+            ).fetchall()
+        return [
+            {
+                "phase_id": row[0],
+                "phase_name": row[1],
+                "environment": row[2],
+                "model_tier": row[3],
+                "signal": row[4],
+                "score": row[5],
+                "reason": row[6],
+            }
+            for row in rows
+        ]
+
+    def export_phase_results_json(
+        self,
+        path: str | Path,
+        phase_id: int | None = None,
+        environment: str | None = None,
+    ) -> None:
+        rows = self.list_phase_results(phase_id=phase_id, environment=environment)
+        with Path(path).open("w", encoding="utf-8") as handle:
+            json.dump(rows, handle, indent=2, sort_keys=True)
+
+    def list_snapshots(self, phase_id: int | None = None) -> list[dict[str, str | float | int]]:
+        clauses = []
+        params: list[int] = []
+        if phase_id is not None:
+            clauses.append("phase_id = ?")
+            params.append(phase_id)
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT phase_id, manifest_json, created_at
+                FROM snapshots
+                {where_sql}
+                ORDER BY phase_id
+                """,
+                params,
+            ).fetchall()
+        return [
+            {
+                "phase_id": row[0],
+                "manifest": json.loads(row[1]),
+                "created_at": row[2],
+            }
+            for row in rows
+        ]
+
+    def telemetry_summary(
+        self,
+        phase_id: int | None = None,
+    ) -> list[dict[str, float | int | str]]:
+        clauses = []
+        params: list[int] = []
+        if phase_id is not None:
+            clauses.append("phase_id = ?")
+            params.append(phase_id)
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT phase_id, state, COUNT(*) AS event_count, AVG(score) AS avg_score
+                FROM telemetry
+                {where_sql}
+                GROUP BY phase_id, state
+                ORDER BY phase_id, state
+                """,
+                params,
+            ).fetchall()
+        return [
+            {
+                "phase_id": row[0],
+                "state": row[1],
+                "event_count": row[2],
+                "avg_score": row[3] if row[3] is not None else 0.0,
+            }
+            for row in rows
+        ]
+
+    def list_ledger_blocks(self, phase_id: int | None = None) -> list[dict[str, str | float | int | dict[str, str]]]:
+        clauses = []
+        params: list[int] = []
+        if phase_id is not None:
+            clauses.append("phase_id = ?")
+            params.append(phase_id)
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id_bloque, phase_id, hash_manifiesto, hash_anterior, tabla_dependencias_json, created_at
+                FROM ledger
+                {where_sql}
+                ORDER BY created_at
+                """,
+                params,
+            ).fetchall()
+        return [
+            {
+                "id_bloque": row[0],
+                "phase_id": row[1],
+                "hash_manifiesto": row[2],
+                "hash_anterior": row[3],
+                "tabla_dependencias": json.loads(row[4]),
+                "created_at": row[5],
+            }
+            for row in rows
+        ]
+
+    def export_audit_bundle_json(
+        self,
+        path: str | Path,
+        phase_id: int | None = None,
+        environment: str | None = None,
+    ) -> None:
+        bundle = {
+            "phase_results": self.list_phase_results(phase_id=phase_id, environment=environment),
+            "telemetry": self.telemetry_summary(phase_id=phase_id),
+            "snapshots": self.list_snapshots(phase_id=phase_id),
+            "ledger": self.list_ledger_blocks(phase_id=phase_id),
+        }
+        with Path(path).open("w", encoding="utf-8") as handle:
+            json.dump(bundle, handle, indent=2, sort_keys=True)
+
+    def _get_last_ledger_hash(self) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT hash_manifiesto FROM ledger ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+        return row[0] if row else "0" * 64
+
+    def append_ledger(self, phase_id: int, manifest: dict[str, str]) -> LedgerBlock:
+        raw = json.dumps(manifest, sort_keys=True)
+        hash_actual = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        hash_anterior = self._get_last_ledger_hash()
+
+        deps: Dict[str, str] = {
+            comp_id: hashlib.sha256(str(comp_data).encode("utf-8")).hexdigest()
+            for comp_id, comp_data in manifest.items()
+        }
+
+        block = LedgerBlock(
+            id_bloque=str(uuid.uuid4()),
+            timestamp=time.time(),
+            fase_id=phase_id,
+            hash_manifiesto=hash_actual,
+            hash_anterior=hash_anterior,
+            tabla_dependencias=deps,
+        )
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ledger(
+                    id_bloque, phase_id, hash_manifiesto, hash_anterior,
+                    tabla_dependencias_json, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    block.id_bloque,
+                    block.fase_id,
+                    block.hash_manifiesto,
+                    block.hash_anterior,
+                    json.dumps(block.tabla_dependencias, sort_keys=True),
+                    block.timestamp,
+                ),
+            )
+        return block
+
+    def verify_integrity(self, manifest_propuesto: dict[str, str]) -> bool:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT tabla_dependencias_json FROM ledger").fetchall()
+
+        consolidado: Dict[str, str] = {}
+        for row in rows:
+            consolidado.update(json.loads(row[0]))
+
+        for comp_id, comp_data in manifest_propuesto.items():
+            if comp_id in consolidado:
+                proposed_hash = hashlib.sha256(str(comp_data).encode("utf-8")).hexdigest()
+                if consolidado[comp_id] != proposed_hash:
+                    return False
+        return True
