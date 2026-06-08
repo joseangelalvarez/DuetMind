@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DuetMind Guia</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>DuetMind</h1>
+      <p class="subtitle">Asistente guiado para usuarios no expertos</p>
+    </header>
+
+    <section class="card">
+      <h2>1) Conectar</h2>
+      <div class="row">
+        <input id="baseUrl" value="http://127.0.0.1:8000" />
+        <button id="btnHealth">Verificar servidor</button>
+      </div>
+      <p id="healthStatus" class="status">Sin verificar</p>
+    </section>
+
+    <section class="card">
+      <h2>2) Ejecutar Analisis</h2>
+      <textarea id="intent" rows="4">Construir modelo conceptual robusto para usuarios no tecnicos</textarea>
+      <div class="row">
+        <select id="agentMode">
+          <option value="mock">Mock</option>
+          <option value="provider">Provider (Ollama)</option>
+        </select>
+        <button id="btnRunAll">Iniciar run-all</button>
+      </div>
+      <p id="liveReasoning" class="status">Listo para iniciar.</p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h3>Decision</h3>
+        <pre id="decision">-</pre>
+      </article>
+      <article class="card">
+        <h3>Siguiente paso sugerido</h3>
+        <pre id="nextAction">-</pre>
+      </article>
+      <article class="card">
+        <h3>Resumen de auditoria</h3>
+        <pre id="bundleSummary">-</pre>
+      </article>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
