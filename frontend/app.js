@@ -1,6 +1,8 @@
 const baseUrlInput = document.getElementById('baseUrl');
 const healthStatus = document.getElementById('healthStatus');
 const healthHeartbeat = document.getElementById('healthHeartbeat');
+const presentationModeButton = document.getElementById('btnPresentationMode');
+const presentationStatus = document.getElementById('presentationStatus');
 const intentInput = document.getElementById('intent');
 const agentMode = document.getElementById('agentMode');
 const liveReasoning = document.getElementById('liveReasoning');
@@ -19,9 +21,14 @@ const copyExecutiveButton = document.getElementById('btnCopyExecutive');
 const downloadExecutiveTxtButton = document.getElementById('btnDownloadExecutiveTxt');
 const downloadExecutiveJsonButton = document.getElementById('btnDownloadExecutiveJson');
 const copyStatus = document.getElementById('copyStatus');
+const historyDecisionFilter = document.getElementById('historyDecisionFilter');
+const historyModeFilter = document.getElementById('historyModeFilter');
+const repeatLastRunButton = document.getElementById('btnRepeatLastRun');
 const runHistory = document.getElementById('runHistory');
 const TOTAL_PHASES = 12;
 const HISTORY_KEY = 'duetmind_run_history_v1';
+const LAST_RUN_KEY = 'duetmind_last_run_v1';
+const PRESENTATION_KEY = 'duetmind_presentation_mode_v1';
 const MAX_HISTORY = 5;
 let latestExecutiveSummary = '';
 let latestExecutivePayload = null;
@@ -148,32 +155,71 @@ function safeLoadHistory() {
   }
 }
 
+function safeLoadLastRun() {
+  try {
+    const raw = localStorage.getItem(LAST_RUN_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function saveLastRun(runConfig) {
+  localStorage.setItem(LAST_RUN_KEY, JSON.stringify(runConfig));
+}
+
+function setPresentationMode(enabled) {
+  document.body.classList.toggle('presentation-mode', enabled);
+  localStorage.setItem(PRESENTATION_KEY, String(enabled));
+  presentationStatus.textContent = enabled
+    ? 'Modo presentacion activo: vista simplificada para demo.'
+    : 'Modo presentacion desactivado.';
+  presentationModeButton.textContent = enabled ? 'Desactivar modo presentacion' : 'Activar modo presentacion';
+}
+
+function loadPresentationMode() {
+  const enabled = localStorage.getItem(PRESENTATION_KEY) === 'true';
+  setPresentationMode(enabled);
+}
+
 function saveHistory(entries) {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
 }
 
 function renderRunHistory() {
   const entries = safeLoadHistory();
+  const decisionFilter = historyDecisionFilter.value;
+  const modeFilter = historyModeFilter.value;
+  const filtered = entries.filter((entry) => {
+    const decisionMatches = decisionFilter === 'all' || entry.decision === decisionFilter;
+    const modeMatches = modeFilter === 'all' || entry.mode === modeFilter;
+    return decisionMatches && modeMatches;
+  });
   runHistory.innerHTML = '';
-  if (entries.length === 0) {
+  if (filtered.length === 0) {
     const item = document.createElement('li');
-    item.textContent = 'Aun no hay corridas guardadas en este navegador.';
+    item.textContent = entries.length === 0
+      ? 'Aun no hay corridas guardadas en este navegador.'
+      : 'No hay corridas que coincidan con los filtros actuales.';
     runHistory.appendChild(item);
     return;
   }
 
-  for (const entry of entries) {
+  for (const entry of filtered) {
     const item = document.createElement('li');
     const timestamp = new Date(entry.timestamp).toLocaleString('es-ES');
-    item.textContent = `${timestamp} | ${entry.decision} | senal ${entry.finalSignal} | fases ${entry.phases}/${TOTAL_PHASES} | score medio ${entry.averageScore}`;
+    item.textContent = `${timestamp} | ${entry.decision} | modo ${entry.mode} | senal ${entry.finalSignal} | fases ${entry.phases}/${TOTAL_PHASES} | score medio ${entry.averageScore}`;
     runHistory.appendChild(item);
   }
 }
 
-function appendRunHistory(runAll, goNoGo, bundle) {
+function appendRunHistory(runConfig, runAll, goNoGo, bundle) {
   const entries = safeLoadHistory();
   const next = {
     timestamp: Date.now(),
+    intent: String(runConfig?.intent || ''),
+    mode: String(runConfig?.mode || 'mock'),
     decision: String(goNoGo.decision || 'UNKNOWN'),
     finalSignal: String(runAll.final_signal || ''),
     phases: Number((bundle.phase_results || []).length),
@@ -331,11 +377,33 @@ async function runPassiveHealthCheck() {
 
 setInterval(runPassiveHealthCheck, 8000);
 renderRunHistory();
+loadPresentationMode();
+
+presentationModeButton.addEventListener('click', () => {
+  const enabled = !document.body.classList.contains('presentation-mode');
+  setPresentationMode(enabled);
+});
+
+historyDecisionFilter.addEventListener('change', renderRunHistory);
+historyModeFilter.addEventListener('change', renderRunHistory);
+
+repeatLastRunButton.addEventListener('click', () => {
+  const lastRun = safeLoadLastRun();
+  if (!lastRun) {
+    copyStatus.textContent = 'No hay una corrida previa para repetir.';
+    return;
+  }
+
+  intentInput.value = lastRun.intent || intentInput.value;
+  agentMode.value = lastRun.mode || agentMode.value;
+  copyStatus.textContent = 'Parametros de la ultima corrida cargados. Inicia run-all para repetirla.';
+});
 
 document.getElementById('btnRunAll').addEventListener('click', async () => {
   const base = baseUrlInput.value.trim();
   const intent = intentInput.value.trim();
   const mode = agentMode.value;
+  const runConfig = { intent, mode };
 
   runAllButton.disabled = true;
   progressBar.style.width = '0%';
@@ -353,6 +421,7 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
 
   let baselineHistoryCount = 0;
   try {
+    saveLastRun(runConfig);
     const history = await getJson(`${base}/history`);
     baselineHistoryCount = Array.isArray(history) ? history.length : 0;
   } catch (_err) {
@@ -409,6 +478,8 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
     latestExecutiveSummary = buildExecutiveSummary(runAll, goNoGo, bundle);
     latestExecutivePayload = {
       generated_at: new Date().toISOString(),
+      intent,
+      mode,
       final_signal: runAll.final_signal,
       decision: goNoGo.decision,
       reasons: goNoGo.reasons,
@@ -420,7 +491,7 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
       snapshots_count: (bundle.snapshots || []).length,
       ledger_count: (bundle.ledger || []).length,
     };
-    appendRunHistory(runAll, goNoGo, bundle);
+    appendRunHistory(runConfig, runAll, goNoGo, bundle);
     copyStatus.textContent = 'Resumen ejecutivo listo para copiar.';
   } catch (err) {
     poller.stop();

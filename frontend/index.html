@@ -11,6 +11,10 @@
     <header>
       <h1>DuetMind</h1>
       <p class="subtitle">Asistente guiado para usuarios no expertos</p>
+      <div class="row row-wrap">
+        <button id="btnPresentationMode" type="button">Activar modo presentacion</button>
+        <p id="presentationStatus" class="copy-status">Modo presentacion desactivado.</p>
+      </div>
     </header>
 
     <section class="card">
@@ -74,6 +78,20 @@
       <article class="card card-span-2">
         <h3>Historial reciente de corridas</h3>
         <p class="subtitle">Comparacion rapida de las ultimas 5 ejecuciones locales en este navegador.</p>
+        <div class="row row-wrap">
+          <select id="historyDecisionFilter">
+            <option value="all">Todas las decisiones</option>
+            <option value="GO">GO</option>
+            <option value="GO_CONDICIONAL">GO_CONDICIONAL</option>
+            <option value="NO_GO">NO_GO</option>
+          </select>
+          <select id="historyModeFilter">
+            <option value="all">Todos los modos</option>
+            <option value="mock">Mock</option>
+            <option value="provider">Provider</option>
+          </select>
+          <button id="btnRepeatLastRun" type="button">Repetir ultima corrida</button>
+        </div>
         <ul id="runHistory" class="run-history"></ul>
       </article>
     </section>
