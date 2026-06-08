@@ -16,9 +16,15 @@ const plainExplanation = document.getElementById('plainExplanation');
 const bundleSummary = document.getElementById('bundleSummary');
 const runAllButton = document.getElementById('btnRunAll');
 const copyExecutiveButton = document.getElementById('btnCopyExecutive');
+const downloadExecutiveTxtButton = document.getElementById('btnDownloadExecutiveTxt');
+const downloadExecutiveJsonButton = document.getElementById('btnDownloadExecutiveJson');
 const copyStatus = document.getElementById('copyStatus');
+const runHistory = document.getElementById('runHistory');
 const TOTAL_PHASES = 12;
+const HISTORY_KEY = 'duetmind_run_history_v1';
+const MAX_HISTORY = 5;
 let latestExecutiveSummary = '';
+let latestExecutivePayload = null;
 
 async function getJson(url) {
   const response = await fetch(url);
@@ -130,6 +136,64 @@ function buildExecutiveSummary(runAll, goNoGo, bundle) {
     `- Bloqueos detectados: ${blockers}`,
     `- Motivos principales: ${reasons}`,
   ].join('\n');
+}
+
+function safeLoadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_err) {
+    return [];
+  }
+}
+
+function saveHistory(entries) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+}
+
+function renderRunHistory() {
+  const entries = safeLoadHistory();
+  runHistory.innerHTML = '';
+  if (entries.length === 0) {
+    const item = document.createElement('li');
+    item.textContent = 'Aun no hay corridas guardadas en este navegador.';
+    runHistory.appendChild(item);
+    return;
+  }
+
+  for (const entry of entries) {
+    const item = document.createElement('li');
+    const timestamp = new Date(entry.timestamp).toLocaleString('es-ES');
+    item.textContent = `${timestamp} | ${entry.decision} | senal ${entry.finalSignal} | fases ${entry.phases}/${TOTAL_PHASES} | score medio ${entry.averageScore}`;
+    runHistory.appendChild(item);
+  }
+}
+
+function appendRunHistory(runAll, goNoGo, bundle) {
+  const entries = safeLoadHistory();
+  const next = {
+    timestamp: Date.now(),
+    decision: String(goNoGo.decision || 'UNKNOWN'),
+    finalSignal: String(runAll.final_signal || ''),
+    phases: Number((bundle.phase_results || []).length),
+    averageScore: typeof goNoGo.average_score === 'number' ? goNoGo.average_score.toFixed(3) : 'n/a',
+  };
+  entries.unshift(next);
+  saveHistory(entries.slice(0, MAX_HISTORY));
+  renderRunHistory();
+}
+
+function downloadFile(fileName, content, contentType) {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 function formatSeconds(seconds) {
@@ -266,6 +330,7 @@ async function runPassiveHealthCheck() {
 }
 
 setInterval(runPassiveHealthCheck, 8000);
+renderRunHistory();
 
 document.getElementById('btnRunAll').addEventListener('click', async () => {
   const base = baseUrlInput.value.trim();
@@ -281,6 +346,7 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
   decisionBadge.className = 'decision-badge decision-unknown';
   decisionBadge.textContent = 'En ejecucion';
   latestExecutiveSummary = '';
+  latestExecutivePayload = null;
   copyStatus.textContent = 'El resumen ejecutivo estara disponible al finalizar la corrida.';
   plainExplanation.textContent = 'Procesando resultados para explicacion no tecnica...';
   liveReasoning.textContent = 'Paso 1/4: iniciando run-all y monitoreo en vivo...';
@@ -341,6 +407,20 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
     progressText.textContent = `Progreso: ${finalCount}/${TOTAL_PHASES} fases`;
     renderPhaseTimeline(bundle.phase_results || [], false, poller.startedAtMs);
     latestExecutiveSummary = buildExecutiveSummary(runAll, goNoGo, bundle);
+    latestExecutivePayload = {
+      generated_at: new Date().toISOString(),
+      final_signal: runAll.final_signal,
+      decision: goNoGo.decision,
+      reasons: goNoGo.reasons,
+      average_score: goNoGo.average_score,
+      minimum_score: goNoGo.minimum_score,
+      coverage: goNoGo.coverage,
+      phase_results_count: (bundle.phase_results || []).length,
+      telemetry_count: (bundle.telemetry || []).length,
+      snapshots_count: (bundle.snapshots || []).length,
+      ledger_count: (bundle.ledger || []).length,
+    };
+    appendRunHistory(runAll, goNoGo, bundle);
     copyStatus.textContent = 'Resumen ejecutivo listo para copiar.';
   } catch (err) {
     poller.stop();
@@ -367,4 +447,23 @@ copyExecutiveButton.addEventListener('click', async () => {
   } catch (_err) {
     copyStatus.textContent = 'No se pudo copiar automaticamente. Intenta desde un navegador con permisos de portapapeles.';
   }
+});
+
+downloadExecutiveTxtButton.addEventListener('click', () => {
+  if (!latestExecutiveSummary) {
+    copyStatus.textContent = 'No hay resumen TXT para descargar. Ejecuta run-all primero.';
+    return;
+  }
+  downloadFile('duetmind-resumen-ejecutivo.txt', latestExecutiveSummary, 'text/plain;charset=utf-8');
+  copyStatus.textContent = 'Resumen TXT descargado.';
+});
+
+downloadExecutiveJsonButton.addEventListener('click', () => {
+  if (!latestExecutivePayload) {
+    copyStatus.textContent = 'No hay resumen JSON para descargar. Ejecuta run-all primero.';
+    return;
+  }
+  const content = JSON.stringify(latestExecutivePayload, null, 2);
+  downloadFile('duetmind-resumen-ejecutivo.json', content, 'application/json;charset=utf-8');
+  copyStatus.textContent = 'Resumen JSON descargado.';
 });

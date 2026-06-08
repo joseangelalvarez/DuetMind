@@ -60,12 +60,21 @@
       <article class="card">
         <h3>Explicacion simple</h3>
         <pre id="plainExplanation">-</pre>
-        <button id="btnCopyExecutive" type="button">Copiar resumen ejecutivo</button>
+        <div class="row row-wrap">
+          <button id="btnCopyExecutive" type="button">Copiar resumen ejecutivo</button>
+          <button id="btnDownloadExecutiveTxt" type="button">Descargar TXT</button>
+          <button id="btnDownloadExecutiveJson" type="button">Descargar JSON</button>
+        </div>
         <p id="copyStatus" class="copy-status">Aun no hay resumen para copiar.</p>
       </article>
       <article class="card">
         <h3>Resumen de auditoria</h3>
         <pre id="bundleSummary">-</pre>
+      </article>
+      <article class="card card-span-2">
+        <h3>Historial reciente de corridas</h3>
+        <p class="subtitle">Comparacion rapida de las ultimas 5 ejecuciones locales en este navegador.</p>
+        <ul id="runHistory" class="run-history"></ul>
       </article>
     </section>
   </main>
