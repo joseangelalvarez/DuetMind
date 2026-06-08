@@ -35,6 +35,10 @@ const trendNoGoRate = document.getElementById('trendNoGoRate');
 const trendAveragePhases = document.getElementById('trendAveragePhases');
 const trendAverageScore = document.getElementById('trendAverageScore');
 const trendDominantMode = document.getElementById('trendDominantMode');
+const executiveDashboard = document.getElementById('executiveDashboard');
+const copyExecutiveDashboardButton = document.getElementById('btnCopyExecutiveDashboard');
+const downloadExecutiveDashboardJsonButton = document.getElementById('btnDownloadExecutiveDashboardJson');
+const executiveDashboardStatus = document.getElementById('executiveDashboardStatus');
 const TOTAL_PHASES = 12;
 const HISTORY_KEY = 'duetmind_run_history_v1';
 const LAST_RUN_KEY = 'duetmind_last_run_v1';
@@ -209,6 +213,7 @@ function renderRunHistory() {
     runHistory.appendChild(item);
     renderTrendMetrics(filtered);
     renderHistoryComparison(filtered);
+    renderExecutiveDashboard(filtered, renderTrendMetrics(filtered));
     return;
   }
 
@@ -219,8 +224,9 @@ function renderRunHistory() {
     runHistory.appendChild(item);
   }
 
-  renderTrendMetrics(filtered);
+  const trend = renderTrendMetrics(filtered);
   renderHistoryComparison(filtered);
+  renderExecutiveDashboard(filtered, trend);
 }
 
 function getFilteredHistoryEntries() {
@@ -285,6 +291,81 @@ function renderTrendMetrics(entries) {
   trendAveragePhases.textContent = total > 0 ? averagePhases.toFixed(1) : '0';
   trendAverageScore.textContent = total > 0 ? averageScore.toFixed(3) : '0.000';
   trendDominantMode.textContent = dominantMode;
+
+  return {
+    total,
+    goCount,
+    noGoCount,
+    averagePhases,
+    averageScore,
+    dominantMode,
+  };
+}
+
+function renderExecutiveDashboard(entries, trend) {
+  if (!entries || entries.length === 0) {
+    executiveDashboard.textContent = 'No hay datos suficientes para construir un dashboard ejecutivo.';
+    executiveDashboardStatus.textContent = 'El dashboard depende de la historia filtrada visible.';
+    return;
+  }
+
+  const latest = entries[0];
+  const previous = entries[1] || null;
+  const trendSummary = trend || renderTrendMetrics(entries);
+  const latestScore = Number.parseFloat(latest.averageScore) || 0;
+  const previousScore = previous ? Number.parseFloat(previous.averageScore) || 0 : latestScore;
+  const scoreDirection = latestScore >= previousScore ? 'sube' : 'baja';
+  const riskLevel = latest.decision === 'GO' ? 'bajo' : latest.decision === 'GO_CONDICIONAL' ? 'medio' : 'alto';
+
+  executiveDashboard.textContent = [
+    `Estado actual: ${latest.decision} con señal ${latest.finalSignal}.`,
+    `Riesgo operativo: ${riskLevel}.`,
+    `Tendencia: ${trendSummary.goCount}/${trendSummary.total} GO, ${trendSummary.noGoCount}/${trendSummary.total} NO_GO, modo dominante ${trendSummary.dominantMode}.`,
+    `Promedios: ${trendSummary.averagePhases.toFixed(1)} fases y score ${trendSummary.averageScore.toFixed(3)}.`,
+    previous ? `Comparacion directa: el score ${scoreDirection} respecto a la corrida anterior.` : 'Comparacion directa: no hay corrida anterior para contrastar.',
+    `Recomendacion: ${latest.decision === 'GO' ? 'continuar' : latest.decision === 'GO_CONDICIONAL' ? 'revisar alertas y continuar con cautela' : 'detener y corregir antes de avanzar'}.`,
+  ].join('\n');
+
+  executiveDashboardStatus.textContent = 'Dashboard ejecutivo actualizado con el historial filtrado.';
+}
+
+function buildExecutiveDashboardPayload(entries, trend) {
+  if (!entries || entries.length === 0) {
+    return {
+      generated_at: new Date().toISOString(),
+      summary: 'No hay datos suficientes para construir un dashboard ejecutivo.',
+      entries: [],
+    };
+  }
+
+  const latest = entries[0];
+  const previous = entries[1] || null;
+  const trendSummary = trend || renderTrendMetrics(entries);
+  const latestScore = Number.parseFloat(latest.averageScore) || 0;
+  const previousScore = previous ? Number.parseFloat(previous.averageScore) || 0 : latestScore;
+
+  return {
+    generated_at: new Date().toISOString(),
+    filters: {
+      decision: historyDecisionFilter.value,
+      mode: historyModeFilter.value,
+    },
+    latest,
+    previous,
+    trend: {
+      total: trendSummary.total,
+      goCount: trendSummary.goCount,
+      noGoCount: trendSummary.noGoCount,
+      averagePhases: trendSummary.averagePhases,
+      averageScore: trendSummary.averageScore,
+      dominantMode: trendSummary.dominantMode,
+    },
+    comparison: {
+      scoreDelta: Number((latestScore - previousScore).toFixed(3)),
+      hasPrevious: Boolean(previous),
+    },
+    recommendation: latest.decision === 'GO' ? 'continuar' : latest.decision === 'GO_CONDICIONAL' ? 'revisar alertas y continuar con cautela' : 'detener y corregir antes de avanzar',
+  };
 }
 
 function appendRunHistory(runConfig, runAll, goNoGo, bundle) {
@@ -518,6 +599,36 @@ exportFilteredHistoryJsonButton.addEventListener('click', () => {
   };
   downloadFile('duetmind-historial-filtrado.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
   historyExportStatus.textContent = 'Historial filtrado exportado como JSON.';
+});
+
+copyExecutiveDashboardButton.addEventListener('click', async () => {
+  const entries = getFilteredHistoryEntries();
+  const trend = renderTrendMetrics(entries);
+  const text = executiveDashboard.textContent || '';
+  if (!entries.length || text.trim() === '-' || text.includes('No hay datos suficientes')) {
+    executiveDashboardStatus.textContent = 'No hay dashboard ejecutivo para copiar.';
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    executiveDashboardStatus.textContent = 'Dashboard ejecutivo copiado al portapapeles.';
+  } catch (_err) {
+    executiveDashboardStatus.textContent = 'No se pudo copiar automaticamente el dashboard.';
+  }
+});
+
+downloadExecutiveDashboardJsonButton.addEventListener('click', () => {
+  const entries = getFilteredHistoryEntries();
+  const trend = renderTrendMetrics(entries);
+  const payload = buildExecutiveDashboardPayload(entries, trend);
+  if (!entries.length) {
+    executiveDashboardStatus.textContent = 'No hay dashboard ejecutivo para exportar.';
+    return;
+  }
+
+  downloadFile('duetmind-dashboard-ejecutivo.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+  executiveDashboardStatus.textContent = 'Dashboard ejecutivo exportado como JSON.';
 });
 
 document.getElementById('btnRunAll').addEventListener('click', async () => {

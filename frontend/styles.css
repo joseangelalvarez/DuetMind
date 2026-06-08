@@ -78,6 +78,12 @@ h1 { margin: 0; font-size: 2rem; }
   font-size: 1.15rem;
   color: #1f1f1f;
 }
+
+#executiveDashboard {
+  margin: 8px 0 12px;
+  background: linear-gradient(180deg, #fbfaf5 0%, #f7f2e7 100%);
+  border: 1px solid #e4d8c6;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -267,7 +273,8 @@ body.presentation-mode .copy-status {
 body.presentation-mode .phase-feed,
 body.presentation-mode .run-history,
 body.presentation-mode #etaText,
-body.presentation-mode #historyComparison {
+body.presentation-mode #historyComparison,
+body.presentation-mode #executiveDashboard {
   display: none;
 }
 
