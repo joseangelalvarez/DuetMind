@@ -25,6 +25,12 @@ const historyDecisionFilter = document.getElementById('historyDecisionFilter');
 const historyModeFilter = document.getElementById('historyModeFilter');
 const repeatLastRunButton = document.getElementById('btnRepeatLastRun');
 const runHistory = document.getElementById('runHistory');
+const trendTotalRuns = document.getElementById('trendTotalRuns');
+const trendGoRate = document.getElementById('trendGoRate');
+const trendNoGoRate = document.getElementById('trendNoGoRate');
+const trendAveragePhases = document.getElementById('trendAveragePhases');
+const trendAverageScore = document.getElementById('trendAverageScore');
+const trendDominantMode = document.getElementById('trendDominantMode');
 const TOTAL_PHASES = 12;
 const HISTORY_KEY = 'duetmind_run_history_v1';
 const LAST_RUN_KEY = 'duetmind_last_run_v1';
@@ -212,6 +218,31 @@ function renderRunHistory() {
     item.textContent = `${timestamp} | ${entry.decision} | modo ${entry.mode} | senal ${entry.finalSignal} | fases ${entry.phases}/${TOTAL_PHASES} | score medio ${entry.averageScore}`;
     runHistory.appendChild(item);
   }
+
+  renderTrendMetrics(filtered);
+}
+
+function renderTrendMetrics(entries) {
+  const total = entries.length;
+  const goCount = entries.filter((entry) => entry.decision === 'GO').length;
+  const noGoCount = entries.filter((entry) => entry.decision === 'NO_GO').length;
+  const averagePhases = total > 0 ? entries.reduce((sum, entry) => sum + Number(entry.phases || 0), 0) / total : 0;
+  const averageScore = total > 0
+    ? entries.reduce((sum, entry) => sum + (Number.parseFloat(entry.averageScore) || 0), 0) / total
+    : 0;
+  const modeCounts = entries.reduce((acc, entry) => {
+    const mode = entry.mode || 'mock';
+    acc[mode] = (acc[mode] || 0) + 1;
+    return acc;
+  }, {});
+  const dominantMode = Object.entries(modeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '-';
+
+  trendTotalRuns.textContent = String(total);
+  trendGoRate.textContent = total > 0 ? `${Math.round((goCount / total) * 100)}%` : '0%';
+  trendNoGoRate.textContent = total > 0 ? `${Math.round((noGoCount / total) * 100)}%` : '0%';
+  trendAveragePhases.textContent = total > 0 ? averagePhases.toFixed(1) : '0';
+  trendAverageScore.textContent = total > 0 ? averageScore.toFixed(3) : '0.000';
+  trendDominantMode.textContent = dominantMode;
 }
 
 function appendRunHistory(runConfig, runAll, goNoGo, bundle) {

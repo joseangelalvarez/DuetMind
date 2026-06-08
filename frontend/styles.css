@@ -47,6 +47,32 @@ h1 { margin: 0; font-size: 2rem; }
   padding: 8px;
   margin-bottom: 8px;
 }
+
+.trend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.trend-item {
+  border: 1px solid #e4d8c6;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fcf8f0;
+}
+
+.trend-label {
+  display: block;
+  color: #6d5f4f;
+  font-size: 0.88rem;
+  margin-bottom: 6px;
+}
+
+.trend-item strong {
+  font-size: 1.15rem;
+  color: #1f1f1f;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -235,7 +261,6 @@ body.presentation-mode .copy-status {
 
 body.presentation-mode .phase-feed,
 body.presentation-mode .run-history,
-body.presentation-mode #bundleSummary,
 body.presentation-mode #etaText {
   display: none;
 }
