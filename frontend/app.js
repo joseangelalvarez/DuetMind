@@ -6,12 +6,15 @@ const liveReasoning = document.getElementById('liveReasoning');
 const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
 const phaseFeed = document.getElementById('phaseFeed');
+const phaseTimeline = document.getElementById('phaseTimeline');
+const etaText = document.getElementById('etaText');
 const decisionBadge = document.getElementById('decisionBadge');
 const decision = document.getElementById('decision');
 const nextAction = document.getElementById('nextAction');
 const plainExplanation = document.getElementById('plainExplanation');
 const bundleSummary = document.getElementById('bundleSummary');
 const runAllButton = document.getElementById('btnRunAll');
+const TOTAL_PHASES = 12;
 
 async function getJson(url) {
   const response = await fetch(url);
@@ -101,8 +104,72 @@ function buildPlainExplanation(goNoGo, bundle) {
   return `Resultado no apto para avanzar automaticamente: ${details}. Se registraron ${completed} fases y ${blockers} bloqueos en esta corrida.`;
 }
 
+function formatSeconds(seconds) {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remSeconds = safeSeconds % 60;
+  if (minutes === 0) {
+    return `${remSeconds}s`;
+  }
+  return `${minutes}m ${remSeconds}s`;
+}
+
+function signalToTimelineState(signalValue) {
+  if (signalValue === 'ESCALAR_A_HUMANO' || signalValue === 'ABORTAR' || signalValue === 'REINICIAR_DESDE_PROMPT_3') {
+    return 'blocked';
+  }
+  return 'done';
+}
+
+function renderPhaseTimeline(rows, isRunning, startedAtMs) {
+  const byPhase = new Map();
+  for (const row of rows) {
+    byPhase.set(Number(row.phase_id), row);
+  }
+
+  const completed = byPhase.size;
+  const nextRunningPhase = Math.min(TOTAL_PHASES, completed + 1);
+
+  phaseTimeline.innerHTML = '';
+  for (let phase = 1; phase <= TOTAL_PHASES; phase += 1) {
+    const row = byPhase.get(phase);
+    let state = 'pending';
+    let label = 'Pendiente';
+
+    if (row) {
+      state = signalToTimelineState(String(row.signal || ''));
+      label = state === 'blocked' ? `Bloqueada: ${row.signal}` : `Completada: ${row.signal}`;
+    } else if (isRunning && phase === nextRunningPhase) {
+      state = 'running';
+      label = 'En ejecucion';
+    }
+
+    const item = document.createElement('li');
+    item.className = `phase-${state}`;
+    item.textContent = `Fase ${phase} - ${label}`;
+    phaseTimeline.appendChild(item);
+  }
+
+  if (!isRunning) {
+    etaText.textContent = 'Duracion estimada restante: corrida finalizada';
+    return;
+  }
+
+  if (completed === 0) {
+    etaText.textContent = 'Duracion estimada restante: por calcular';
+    return;
+  }
+
+  const elapsedSeconds = (Date.now() - startedAtMs) / 1000;
+  const avgPerPhase = elapsedSeconds / completed;
+  const remaining = Math.max(0, TOTAL_PHASES - completed);
+  const etaSeconds = remaining * avgPerPhase;
+  etaText.textContent = `Duracion estimada restante: ${formatSeconds(etaSeconds)} (promedio ${formatSeconds(avgPerPhase)} por fase)`;
+}
+
 function startRunAllLivePolling(base, baselineHistoryCount) {
   const state = { active: true };
+  const startedAtMs = Date.now();
 
   const poll = async () => {
     if (!state.active) {
@@ -113,11 +180,12 @@ function startRunAllLivePolling(base, baselineHistoryCount) {
       const rows = Array.isArray(history) ? history : [];
       const newRows = rows.slice(baselineHistoryCount);
       const completed = newRows.length;
-      const percent = Math.min(100, Math.round((completed / 12) * 100));
+      const percent = Math.min(100, Math.round((completed / TOTAL_PHASES) * 100));
 
       progressBar.style.width = `${percent}%`;
-      progressText.textContent = `Progreso: ${Math.min(completed, 12)}/12 fases`;
+      progressText.textContent = `Progreso: ${Math.min(completed, TOTAL_PHASES)}/${TOTAL_PHASES} fases`;
       renderPhaseFeed(newRows);
+      renderPhaseTimeline(newRows, true, startedAtMs);
 
       if (completed > 0) {
         const last = newRows[newRows.length - 1];
@@ -138,6 +206,7 @@ function startRunAllLivePolling(base, baselineHistoryCount) {
       state.active = false;
       clearInterval(timer);
     },
+    startedAtMs,
   };
 }
 
@@ -159,8 +228,10 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
 
   runAllButton.disabled = true;
   progressBar.style.width = '0%';
-  progressText.textContent = 'Progreso: 0/12 fases';
+  progressText.textContent = `Progreso: 0/${TOTAL_PHASES} fases`;
   phaseFeed.innerHTML = '';
+  renderPhaseTimeline([], true, Date.now());
+  etaText.textContent = 'Duracion estimada restante: por calcular';
   decisionBadge.className = 'decision-badge decision-unknown';
   decisionBadge.textContent = 'En ejecucion';
   plainExplanation.textContent = 'Procesando resultados para explicacion no tecnica...';
@@ -217,15 +288,17 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
       2
     );
     const finalCount = Math.min((bundle.phase_results || []).length, 12);
-    const finalPercent = Math.min(100, Math.round((finalCount / 12) * 100));
+    const finalPercent = Math.min(100, Math.round((finalCount / TOTAL_PHASES) * 100));
     progressBar.style.width = `${finalPercent}%`;
-    progressText.textContent = `Progreso: ${finalCount}/12 fases`;
+    progressText.textContent = `Progreso: ${finalCount}/${TOTAL_PHASES} fases`;
+    renderPhaseTimeline(bundle.phase_results || [], false, poller.startedAtMs);
   } catch (err) {
     poller.stop();
     liveReasoning.textContent = `Error durante ejecucion: ${err.message}`;
     decisionBadge.className = 'decision-badge decision-no-go';
     decisionBadge.textContent = 'Error de ejecucion';
     plainExplanation.textContent = 'No fue posible completar el analisis. Verifica conexion, servidor y parametros antes de reintentar.';
+    renderPhaseTimeline([], false, poller.startedAtMs);
   } finally {
     runAllButton.disabled = false;
   }

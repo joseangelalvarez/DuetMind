@@ -98,6 +98,48 @@ button:hover { filter: brightness(1.05); }
   color: #0f766e;
 }
 
+.eta-text {
+  margin: 6px 0;
+  color: #35544f;
+  font-weight: 600;
+}
+
+.phase-timeline {
+  margin: 8px 0 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.phase-timeline li {
+  border: 1px solid #e4d8c6;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fcf8f0;
+  font-size: 0.92rem;
+}
+
+.phase-pending {
+  border-left: 6px solid #c3b79f;
+}
+
+.phase-running {
+  border-left: 6px solid #0f766e;
+  background: #edf9f7;
+}
+
+.phase-done {
+  border-left: 6px solid #2e8b57;
+  background: #eefaf1;
+}
+
+.phase-blocked {
+  border-left: 6px solid #9a1f1f;
+  background: #fff0f0;
+}
+
 .decision-badge {
   display: inline-block;
   margin: 0 0 8px;
