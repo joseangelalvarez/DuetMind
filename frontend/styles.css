@@ -59,6 +59,45 @@ button {
 }
 button:hover { filter: brightness(1.05); }
 .status { color: var(--warn); min-height: 24px; }
+
+.progress-wrap {
+  margin-top: 8px;
+}
+
+.progress-track {
+  height: 12px;
+  border-radius: 999px;
+  background: #efe6d8;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #0f766e, #16a34a);
+  transition: width 220ms ease-in-out;
+}
+
+.progress-text {
+  margin: 8px 0 2px;
+  color: #36554f;
+  font-weight: 600;
+}
+
+.phase-feed {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  min-height: 24px;
+}
+
+.phase-feed li {
+  margin: 4px 0;
+  color: #2f2a23;
+}
+
+.phase-feed li strong {
+  color: #0f766e;
+}
+
 pre {
   white-space: pre-wrap;
   word-break: break-word;

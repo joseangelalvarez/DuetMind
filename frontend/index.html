@@ -33,6 +33,14 @@
         <button id="btnRunAll">Iniciar run-all</button>
       </div>
       <p id="liveReasoning" class="status">Listo para iniciar.</p>
+      <div class="progress-wrap" aria-live="polite">
+        <div class="progress-track">
+          <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+        </div>
+        <p id="progressText" class="progress-text">Progreso: 0/12 fases</p>
+      </div>
+      <h3>Evolucion en vivo</h3>
+      <ul id="phaseFeed" class="phase-feed"></ul>
     </section>
 
     <section class="grid">

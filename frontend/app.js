@@ -3,9 +3,13 @@ const healthStatus = document.getElementById('healthStatus');
 const intentInput = document.getElementById('intent');
 const agentMode = document.getElementById('agentMode');
 const liveReasoning = document.getElementById('liveReasoning');
+const progressBar = document.getElementById('progressBar');
+const progressText = document.getElementById('progressText');
+const phaseFeed = document.getElementById('phaseFeed');
 const decision = document.getElementById('decision');
 const nextAction = document.getElementById('nextAction');
 const bundleSummary = document.getElementById('bundleSummary');
+const runAllButton = document.getElementById('btnRunAll');
 
 async function getJson(url) {
   const response = await fetch(url);
@@ -27,6 +31,61 @@ async function postJson(url, payload) {
   return response.json();
 }
 
+function renderPhaseFeed(rows) {
+  const recentRows = rows.slice(-6);
+  phaseFeed.innerHTML = '';
+  for (const row of recentRows) {
+    const item = document.createElement('li');
+    item.innerHTML = `<strong>Fase ${row.phase_id}</strong>: ${row.signal} (${row.reason})`;
+    phaseFeed.appendChild(item);
+  }
+  if (recentRows.length === 0) {
+    const item = document.createElement('li');
+    item.textContent = 'Sin eventos nuevos por ahora.';
+    phaseFeed.appendChild(item);
+  }
+}
+
+function startRunAllLivePolling(base, baselineHistoryCount) {
+  const state = { active: true };
+
+  const poll = async () => {
+    if (!state.active) {
+      return;
+    }
+    try {
+      const history = await getJson(`${base}/history`);
+      const rows = Array.isArray(history) ? history : [];
+      const newRows = rows.slice(baselineHistoryCount);
+      const completed = newRows.length;
+      const percent = Math.min(100, Math.round((completed / 12) * 100));
+
+      progressBar.style.width = `${percent}%`;
+      progressText.textContent = `Progreso: ${Math.min(completed, 12)}/12 fases`;
+      renderPhaseFeed(newRows);
+
+      if (completed > 0) {
+        const last = newRows[newRows.length - 1];
+        liveReasoning.textContent = `Avance: fase ${last.phase_id} termino con ${last.signal}.`;
+      } else {
+        liveReasoning.textContent = 'Procesando run-all, esperando primeros resultados...';
+      }
+    } catch (_err) {
+      liveReasoning.textContent = 'Ejecucion en curso; no se pudo leer progreso temporalmente.';
+    }
+  };
+
+  const timer = setInterval(poll, 1400);
+  poll();
+
+  return {
+    stop() {
+      state.active = false;
+      clearInterval(timer);
+    },
+  };
+}
+
 document.getElementById('btnHealth').addEventListener('click', async () => {
   const base = baseUrlInput.value.trim();
   healthStatus.textContent = 'Comprobando servidor...';
@@ -43,9 +102,25 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
   const intent = intentInput.value.trim();
   const mode = agentMode.value;
 
-  liveReasoning.textContent = 'Paso 1/4: enviando solicitud run-all...';
+  runAllButton.disabled = true;
+  progressBar.style.width = '0%';
+  progressText.textContent = 'Progreso: 0/12 fases';
+  phaseFeed.innerHTML = '';
+  liveReasoning.textContent = 'Paso 1/4: iniciando run-all y monitoreo en vivo...';
+
+  let baselineHistoryCount = 0;
+  try {
+    const history = await getJson(`${base}/history`);
+    baselineHistoryCount = Array.isArray(history) ? history.length : 0;
+  } catch (_err) {
+    baselineHistoryCount = 0;
+  }
+
+  const poller = startRunAllLivePolling(base, baselineHistoryCount);
+
   try {
     const runAll = await postJson(`${base}/run-all`, { intent, agent_mode: mode });
+    poller.stop();
     liveReasoning.textContent = 'Paso 2/4: run-all completado, evaluando decision...';
 
     const goNoGo = await getJson(`${base}/go-no-go`);
@@ -81,7 +156,12 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
       null,
       2
     );
+    progressBar.style.width = '100%';
+    progressText.textContent = `Progreso: ${Math.min((bundle.phase_results || []).length, 12)}/12 fases`;
   } catch (err) {
+    poller.stop();
     liveReasoning.textContent = `Error durante ejecucion: ${err.message}`;
+  } finally {
+    runAllButton.disabled = false;
   }
 });
