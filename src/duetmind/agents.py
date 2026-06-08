@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -180,10 +181,24 @@ def build_default_agents() -> tuple[MockAgentAdapter, MockAgentAdapter]:
 
 
 def build_provider_agents() -> tuple[ProviderAgentAdapter, ProviderAgentAdapter]:
-    from duetmind.providers import StaticInferenceProvider
+    from duetmind.providers import OllamaInferenceProvider
 
-    provider_a = StaticInferenceProvider("local-static-a", "proposal_yagni")
-    provider_b = StaticInferenceProvider("local-static-b", "audit_zero_trust")
+    base_url = os.getenv("DUETMIND_OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    model_a = os.getenv("DUETMIND_OLLAMA_MODEL_A", "llama3.1:8b")
+    model_b = os.getenv("DUETMIND_OLLAMA_MODEL_B", model_a)
+
+    provider_a = OllamaInferenceProvider(
+        model=model_a,
+        base_url=base_url,
+        provider_name="ollama-a",
+        fallback_suffix="proposal_yagni",
+    )
+    provider_b = OllamaInferenceProvider(
+        model=model_b,
+        base_url=base_url,
+        provider_name="ollama-b",
+        fallback_suffix="audit_zero_trust",
+    )
     prompt_library = PromptLibrary()
     agent_a = ProviderAgentAdapter(
         AgentId.A,

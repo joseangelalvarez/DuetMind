@@ -3,7 +3,7 @@ import json
 
 from duetmind.agents import AgentProfile, ProviderAgentAdapter
 from duetmind.models import AgentId
-from duetmind.providers import ProviderResponse, StaticInferenceProvider
+from duetmind.providers import OllamaInferenceProvider, ProviderResponse, StaticInferenceProvider
 
 
 class NoisyStaticProvider(StaticInferenceProvider):
@@ -56,6 +56,13 @@ class CompactStaticProvider(StaticInferenceProvider):
 
 
 class TestProviderAgents(unittest.TestCase):
+    def test_build_provider_agents_uses_ollama_provider(self) -> None:
+        from duetmind.agents import build_provider_agents
+
+        a, b = build_provider_agents()
+        self.assertIsInstance(a.provider, OllamaInferenceProvider)
+        self.assertIsInstance(b.provider, OllamaInferenceProvider)
+
     def test_provider_agent_generates_valid_message(self) -> None:
         provider = StaticInferenceProvider("local-static", "proposal_yagni")
         adapter = ProviderAgentAdapter(

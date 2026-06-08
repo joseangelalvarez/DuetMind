@@ -19,6 +19,17 @@ python -m pip install -e .
 python -m duetmind.main --demo
 ```
 
+Modo provider real con Ollama:
+
+```powershell
+$env:DUETMIND_OLLAMA_BASE_URL="http://127.0.0.1:11434"
+$env:DUETMIND_OLLAMA_MODEL_A="llama3.1:8b"
+$env:DUETMIND_OLLAMA_MODEL_B="llama3.1:8b"
+python -m duetmind.main --run-all --agent-mode provider
+```
+
+Si Ollama no esta disponible, el adapter aplica fallback defensivo para no romper la ejecucion.
+
 ## Servidor HTTP de auditoria
 
 ```powershell
