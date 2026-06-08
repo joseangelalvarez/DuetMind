@@ -6,8 +6,10 @@ const liveReasoning = document.getElementById('liveReasoning');
 const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
 const phaseFeed = document.getElementById('phaseFeed');
+const decisionBadge = document.getElementById('decisionBadge');
 const decision = document.getElementById('decision');
 const nextAction = document.getElementById('nextAction');
+const plainExplanation = document.getElementById('plainExplanation');
 const bundleSummary = document.getElementById('bundleSummary');
 const runAllButton = document.getElementById('btnRunAll');
 
@@ -36,7 +38,10 @@ function renderPhaseFeed(rows) {
   phaseFeed.innerHTML = '';
   for (const row of recentRows) {
     const item = document.createElement('li');
-    item.innerHTML = `<strong>Fase ${row.phase_id}</strong>: ${row.signal} (${row.reason})`;
+    const title = document.createElement('strong');
+    title.textContent = `Fase ${row.phase_id}`;
+    item.appendChild(title);
+    item.append(`: ${row.signal} (${row.reason})`);
     phaseFeed.appendChild(item);
   }
   if (recentRows.length === 0) {
@@ -44,6 +49,56 @@ function renderPhaseFeed(rows) {
     item.textContent = 'Sin eventos nuevos por ahora.';
     phaseFeed.appendChild(item);
   }
+}
+
+function renderDecisionBadge(decisionValue, finalSignal) {
+  decisionBadge.className = 'decision-badge';
+  if (decisionValue === 'GO') {
+    decisionBadge.classList.add('decision-go');
+    decisionBadge.textContent = 'VERDE - GO';
+    return;
+  }
+  if (decisionValue === 'GO_CONDICIONAL') {
+    decisionBadge.classList.add('decision-conditional');
+    decisionBadge.textContent = 'AMARILLO - GO_CONDICIONAL';
+    return;
+  }
+  if (decisionValue === 'NO_GO') {
+    decisionBadge.classList.add('decision-no-go');
+    decisionBadge.textContent = finalSignal === 'ESCALAR_A_HUMANO' ? 'ROJO - ESCALAR_A_HUMANO' : 'ROJO - NO_GO';
+    return;
+  }
+  decisionBadge.classList.add('decision-unknown');
+  decisionBadge.textContent = 'Sin evaluar';
+}
+
+function buildPlainExplanation(goNoGo, bundle) {
+  const reasons = Array.isArray(goNoGo.reasons) ? goNoGo.reasons : [];
+  const completed = (bundle.phase_results || []).length;
+  const blockers = (goNoGo.blocking_signals || []).length;
+  const coverage = typeof goNoGo.coverage === 'number' ? Math.round(goNoGo.coverage * 100) : 0;
+
+  if (goNoGo.decision === 'GO') {
+    return 'Resultado favorable: el sistema completo todas las fases necesarias y no detecto bloqueos criticos. Puedes avanzar con confianza al siguiente objetivo.';
+  }
+
+  if (goNoGo.decision === 'GO_CONDICIONAL') {
+    return `Resultado intermedio: el analisis avanza, pero conviene revisar detalles antes de continuar. Cobertura aproximada: ${coverage}% con ${completed} fases registradas.`;
+  }
+
+  const reasonHints = [];
+  if (reasons.includes('blocking_signal_detected')) {
+    reasonHints.push('aparecieron señales de bloqueo que requieren revisión');
+  }
+  if (reasons.includes('incomplete_phase_coverage')) {
+    reasonHints.push('no se completaron todas las fases esperadas');
+  }
+  if (reasons.includes('average_score_below_threshold') || reasons.includes('minimum_score_below_threshold')) {
+    reasonHints.push('la calidad promedio quedó por debajo del umbral configurado');
+  }
+
+  const details = reasonHints.length > 0 ? reasonHints.join('; ') : 'los indicadores de calidad no fueron suficientes para aprobar';
+  return `Resultado no apto para avanzar automaticamente: ${details}. Se registraron ${completed} fases y ${blockers} bloqueos en esta corrida.`;
 }
 
 function startRunAllLivePolling(base, baselineHistoryCount) {
@@ -106,6 +161,9 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
   progressBar.style.width = '0%';
   progressText.textContent = 'Progreso: 0/12 fases';
   phaseFeed.innerHTML = '';
+  decisionBadge.className = 'decision-badge decision-unknown';
+  decisionBadge.textContent = 'En ejecucion';
+  plainExplanation.textContent = 'Procesando resultados para explicacion no tecnica...';
   liveReasoning.textContent = 'Paso 1/4: iniciando run-all y monitoreo en vivo...';
 
   let baselineHistoryCount = 0;
@@ -145,6 +203,8 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
         ? 'Continua con cautela y revisa las alertas de fases incompletas.'
         : 'Recomendado: reintentar con intent mas especifico o revisar bloqueo en fase temprana.';
     nextAction.textContent = action;
+    renderDecisionBadge(goNoGo.decision, runAll.final_signal);
+    plainExplanation.textContent = buildPlainExplanation(goNoGo, bundle);
 
     bundleSummary.textContent = JSON.stringify(
       {
@@ -156,11 +216,16 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
       null,
       2
     );
-    progressBar.style.width = '100%';
-    progressText.textContent = `Progreso: ${Math.min((bundle.phase_results || []).length, 12)}/12 fases`;
+    const finalCount = Math.min((bundle.phase_results || []).length, 12);
+    const finalPercent = Math.min(100, Math.round((finalCount / 12) * 100));
+    progressBar.style.width = `${finalPercent}%`;
+    progressText.textContent = `Progreso: ${finalCount}/12 fases`;
   } catch (err) {
     poller.stop();
     liveReasoning.textContent = `Error durante ejecucion: ${err.message}`;
+    decisionBadge.className = 'decision-badge decision-no-go';
+    decisionBadge.textContent = 'Error de ejecucion';
+    plainExplanation.textContent = 'No fue posible completar el analisis. Verifica conexion, servidor y parametros antes de reintentar.';
   } finally {
     runAllButton.disabled = false;
   }

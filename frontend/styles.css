@@ -98,6 +98,35 @@ button:hover { filter: brightness(1.05); }
   color: #0f766e;
 }
 
+.decision-badge {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.decision-go {
+  background: #d9f7dd;
+  color: #126834;
+}
+
+.decision-conditional {
+  background: #fff3d6;
+  color: #9a5a00;
+}
+
+.decision-no-go {
+  background: #fde2e1;
+  color: #9a1f1f;
+}
+
+.decision-unknown {
+  background: #ece7da;
+  color: #5a5a5a;
+}
+
 pre {
   white-space: pre-wrap;
   word-break: break-word;
