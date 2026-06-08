@@ -1,5 +1,6 @@
 const baseUrlInput = document.getElementById('baseUrl');
 const healthStatus = document.getElementById('healthStatus');
+const healthHeartbeat = document.getElementById('healthHeartbeat');
 const intentInput = document.getElementById('intent');
 const agentMode = document.getElementById('agentMode');
 const liveReasoning = document.getElementById('liveReasoning');
@@ -14,7 +15,10 @@ const nextAction = document.getElementById('nextAction');
 const plainExplanation = document.getElementById('plainExplanation');
 const bundleSummary = document.getElementById('bundleSummary');
 const runAllButton = document.getElementById('btnRunAll');
+const copyExecutiveButton = document.getElementById('btnCopyExecutive');
+const copyStatus = document.getElementById('copyStatus');
 const TOTAL_PHASES = 12;
+let latestExecutiveSummary = '';
 
 async function getJson(url) {
   const response = await fetch(url);
@@ -45,6 +49,14 @@ function renderPhaseFeed(rows) {
     title.textContent = `Fase ${row.phase_id}`;
     item.appendChild(title);
     item.append(`: ${row.signal} (${row.reason})`);
+    const signal = String(row.signal || '');
+    if (signal === 'CONVERGE_CONDICIONADO') {
+      item.classList.add('feed-ok');
+    } else if (signal === 'ESCALAR_A_HUMANO' || signal === 'ABORTAR' || signal === 'REINICIAR_DESDE_PROMPT_3') {
+      item.classList.add('feed-error');
+    } else {
+      item.classList.add('feed-warn');
+    }
     phaseFeed.appendChild(item);
   }
   if (recentRows.length === 0) {
@@ -102,6 +114,22 @@ function buildPlainExplanation(goNoGo, bundle) {
 
   const details = reasonHints.length > 0 ? reasonHints.join('; ') : 'los indicadores de calidad no fueron suficientes para aprobar';
   return `Resultado no apto para avanzar automaticamente: ${details}. Se registraron ${completed} fases y ${blockers} bloqueos en esta corrida.`;
+}
+
+function buildExecutiveSummary(runAll, goNoGo, bundle) {
+  const phases = (bundle.phase_results || []).length;
+  const telemetry = (bundle.telemetry || []).length;
+  const blockers = (goNoGo.blocking_signals || []).length;
+  const reasons = Array.isArray(goNoGo.reasons) ? goNoGo.reasons.join(', ') : 'sin detalles';
+  return [
+    'Resumen Ejecutivo DuetMind',
+    `- Senal final: ${runAll.final_signal}`,
+    `- Decision: ${goNoGo.decision}`,
+    `- Fases registradas: ${phases}/${TOTAL_PHASES}`,
+    `- Eventos de telemetria: ${telemetry}`,
+    `- Bloqueos detectados: ${blockers}`,
+    `- Motivos principales: ${reasons}`,
+  ].join('\n');
 }
 
 function formatSeconds(seconds) {
@@ -216,10 +244,28 @@ document.getElementById('btnHealth').addEventListener('click', async () => {
   try {
     const health = await getJson(`${base}/health`);
     healthStatus.textContent = health.status === 'ok' ? 'Servidor conectado y listo.' : 'Servidor responde pero no esta listo.';
+    healthHeartbeat.textContent = 'Auto-verificacion cada 8s activa.';
   } catch (err) {
     healthStatus.textContent = `No se pudo conectar: ${err.message}`;
+    healthHeartbeat.textContent = 'Auto-verificacion activa, ultimo estado: sin conexion.';
   }
 });
+
+async function runPassiveHealthCheck() {
+  const base = baseUrlInput.value.trim();
+  try {
+    const health = await getJson(`${base}/health`);
+    if (health.status === 'ok') {
+      healthHeartbeat.textContent = 'Auto-verificacion: servidor disponible.';
+    } else {
+      healthHeartbeat.textContent = 'Auto-verificacion: respuesta atipica del servidor.';
+    }
+  } catch (err) {
+    healthHeartbeat.textContent = `Auto-verificacion: sin conexion (${err.message}).`;
+  }
+}
+
+setInterval(runPassiveHealthCheck, 8000);
 
 document.getElementById('btnRunAll').addEventListener('click', async () => {
   const base = baseUrlInput.value.trim();
@@ -234,6 +280,8 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
   etaText.textContent = 'Duracion estimada restante: por calcular';
   decisionBadge.className = 'decision-badge decision-unknown';
   decisionBadge.textContent = 'En ejecucion';
+  latestExecutiveSummary = '';
+  copyStatus.textContent = 'El resumen ejecutivo estara disponible al finalizar la corrida.';
   plainExplanation.textContent = 'Procesando resultados para explicacion no tecnica...';
   liveReasoning.textContent = 'Paso 1/4: iniciando run-all y monitoreo en vivo...';
 
@@ -292,14 +340,31 @@ document.getElementById('btnRunAll').addEventListener('click', async () => {
     progressBar.style.width = `${finalPercent}%`;
     progressText.textContent = `Progreso: ${finalCount}/${TOTAL_PHASES} fases`;
     renderPhaseTimeline(bundle.phase_results || [], false, poller.startedAtMs);
+    latestExecutiveSummary = buildExecutiveSummary(runAll, goNoGo, bundle);
+    copyStatus.textContent = 'Resumen ejecutivo listo para copiar.';
   } catch (err) {
     poller.stop();
     liveReasoning.textContent = `Error durante ejecucion: ${err.message}`;
     decisionBadge.className = 'decision-badge decision-no-go';
     decisionBadge.textContent = 'Error de ejecucion';
     plainExplanation.textContent = 'No fue posible completar el analisis. Verifica conexion, servidor y parametros antes de reintentar.';
+    copyStatus.textContent = 'No hay resumen ejecutivo por error en la corrida.';
     renderPhaseTimeline([], false, poller.startedAtMs);
   } finally {
     runAllButton.disabled = false;
+  }
+});
+
+copyExecutiveButton.addEventListener('click', async () => {
+  if (!latestExecutiveSummary) {
+    copyStatus.textContent = 'Aun no hay datos para copiar. Ejecuta run-all primero.';
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(latestExecutiveSummary);
+    copyStatus.textContent = 'Resumen ejecutivo copiado al portapapeles.';
+  } catch (_err) {
+    copyStatus.textContent = 'No se pudo copiar automaticamente. Intenta desde un navegador con permisos de portapapeles.';
   }
 });
