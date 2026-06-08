@@ -12,70 +12,81 @@
       <h1>DuetMind</h1>
       <p class="subtitle">Asistente guiado para usuarios no expertos</p>
       <div class="row row-wrap">
-        <button id="btnPresentationMode" type="button">Activar modo presentacion</button>
-        <p id="presentationStatus" class="copy-status">Modo presentacion desactivado.</p>
+        <button id="btnPresentationMode" type="button">Mostrar detalles avanzados</button>
+        <p id="presentationStatus" class="copy-status">Detalles avanzados ocultos.</p>
       </div>
     </header>
 
     <section class="card">
-      <h2>1) Conectar</h2>
-      <div class="row">
-        <input id="baseUrl" value="http://127.0.0.1:8000" />
-        <button id="btnHealth">Verificar servidor</button>
-      </div>
-      <p id="healthStatus" class="status">Sin verificar</p>
-      <p id="healthHeartbeat" class="heartbeat">Auto-verificacion cada 8s activa.</p>
-    </section>
-
-    <section class="card">
-      <h2>2) Ejecutar Analisis</h2>
+      <h2>1) Analisis rapido</h2>
+      <p class="subtitle">Una sola accion para iniciar el analisis recomendado.</p>
       <textarea id="intent" rows="4">Construir modelo conceptual robusto para usuarios no tecnicos</textarea>
       <div class="row">
-        <select id="agentMode">
-          <option value="mock">Mock</option>
-          <option value="provider">Provider (Ollama)</option>
-        </select>
         <button id="btnRunAll">Iniciar run-all</button>
       </div>
       <p id="liveReasoning" class="status">Listo para iniciar.</p>
-      <div class="progress-wrap" aria-live="polite">
-        <div class="progress-track">
-          <div id="progressBar" class="progress-bar" style="width: 0%"></div>
-        </div>
-        <p id="progressText" class="progress-text">Progreso: 0/12 fases</p>
-      </div>
-      <h3>Evolucion en vivo</h3>
-      <ul id="phaseFeed" class="phase-feed"></ul>
-      <h3>Timeline de fases</h3>
-      <p id="etaText" class="eta-text">Duracion estimada restante: por calcular</p>
-      <ol id="phaseTimeline" class="phase-timeline"></ol>
     </section>
 
     <section class="grid">
       <article class="card">
-        <h3>Decision</h3>
+        <h3>Decision simple</h3>
         <p id="decisionBadge" class="decision-badge decision-unknown">Sin evaluar</p>
         <pre id="decision">-</pre>
       </article>
       <article class="card">
-        <h3>Siguiente paso sugerido</h3>
+        <h3>Siguiente paso</h3>
         <pre id="nextAction">-</pre>
       </article>
       <article class="card">
         <h3>Explicacion simple</h3>
         <pre id="plainExplanation">-</pre>
-        <div class="row row-wrap">
-          <button id="btnCopyExecutive" type="button">Copiar resumen ejecutivo</button>
-          <button id="btnDownloadExecutiveTxt" type="button">Descargar TXT</button>
-          <button id="btnDownloadExecutiveJson" type="button">Descargar JSON</button>
-        </div>
-        <p id="copyStatus" class="copy-status">Aun no hay resumen para copiar.</p>
       </article>
-      <article class="card">
+    </section>
+
+    <section id="advancedPanel" class="advanced-panel hidden">
+      <section class="card">
+        <h2>Detalles avanzados</h2>
+        <div class="row">
+          <input id="baseUrl" value="http://127.0.0.1:8000" />
+          <button id="btnHealth">Verificar servidor</button>
+        </div>
+        <p id="healthStatus" class="status">Sin verificar</p>
+        <p id="healthHeartbeat" class="heartbeat">Auto-verificacion cada 8s activa.</p>
+      </section>
+
+      <section class="card">
+        <h2>Parametros avanzados</h2>
+        <div class="row">
+          <select id="agentMode">
+            <option value="mock">Mock</option>
+            <option value="provider">Provider (Ollama)</option>
+          </select>
+        </div>
+        <p class="subtitle">La ejecucion simple usa la misma configuracion, pero sin exponer estos controles por defecto.</p>
+      </section>
+
+      <section class="card">
+        <h3>Progreso en vivo</h3>
+        <div class="progress-wrap" aria-live="polite">
+          <div class="progress-track">
+            <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+          </div>
+          <p id="progressText" class="progress-text">Progreso: 0/12 fases</p>
+        </div>
+        <p id="liveReasoning" class="status">Listo para iniciar.</p>
+        <h3>Evolucion en vivo</h3>
+        <ul id="phaseFeed" class="phase-feed"></ul>
+        <h3>Timeline de fases</h3>
+        <p id="etaText" class="eta-text">Duracion estimada restante: por calcular</p>
+        <ol id="phaseTimeline" class="phase-timeline"></ol>
+      </section>
+
+      <section class="card card-span-2">
         <h3>Resumen de auditoria</h3>
         <pre id="bundleSummary">-</pre>
-      </article>
-      <article class="card card-span-2">
+      </section>
+
+      <section class="card card-span-2">
         <h3>Dashboard ejecutivo</h3>
         <p class="subtitle">Conclusión única sobre estado, tendencia y riesgo a partir de la historia visible.</p>
         <pre id="executiveDashboard">-</pre>
@@ -84,8 +95,9 @@
           <button id="btnDownloadExecutiveDashboardJson" type="button">Descargar dashboard JSON</button>
         </div>
         <p id="executiveDashboardStatus" class="copy-status">El dashboard se actualiza con los filtros del historial.</p>
-      </article>
-      <article class="card card-span-2">
+      </section>
+
+      <section class="card card-span-2">
         <h3>Metricas de tendencia</h3>
         <p class="subtitle">Resumen rapido de las ultimas corridas visibles segun los filtros actuales.</p>
         <div class="trend-grid">
@@ -114,8 +126,9 @@
             <strong id="trendDominantMode">-</strong>
           </div>
         </div>
-      </article>
-      <article class="card card-span-2">
+      </section>
+
+      <section class="card card-span-2">
         <h3>Historial reciente de corridas</h3>
         <p class="subtitle">Comparacion rapida de las ultimas 5 ejecuciones locales en este navegador.</p>
         <div class="row row-wrap">
@@ -140,7 +153,29 @@
         <h4>Comparacion de las dos ultimas corridas visibles</h4>
         <pre id="historyComparison">-</pre>
         <ul id="runHistory" class="run-history"></ul>
-      </article>
+      </section>
+
+      <section class="card card-span-2">
+        <h3>Explicacion simple</h3>
+        <pre id="plainExplanation">-</pre>
+        <div class="row row-wrap">
+          <button id="btnCopyExecutive" type="button">Copiar resumen ejecutivo</button>
+          <button id="btnDownloadExecutiveTxt" type="button">Descargar TXT</button>
+          <button id="btnDownloadExecutiveJson" type="button">Descargar JSON</button>
+        </div>
+        <p id="copyStatus" class="copy-status">Aun no hay resumen para copiar.</p>
+      </section>
+
+      <section class="card card-span-2">
+        <h3>Decision</h3>
+        <p id="decisionBadge" class="decision-badge decision-unknown">Sin evaluar</p>
+        <pre id="decision">-</pre>
+      </section>
+
+      <section class="card card-span-2">
+        <h3>Siguiente paso sugerido</h3>
+        <pre id="nextAction">-</pre>
+      </section>
     </section>
   </main>
   <script src="app.js"></script>

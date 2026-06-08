@@ -3,6 +3,7 @@ const healthStatus = document.getElementById('healthStatus');
 const healthHeartbeat = document.getElementById('healthHeartbeat');
 const presentationModeButton = document.getElementById('btnPresentationMode');
 const presentationStatus = document.getElementById('presentationStatus');
+const advancedPanel = document.getElementById('advancedPanel');
 const intentInput = document.getElementById('intent');
 const agentMode = document.getElementById('agentMode');
 const liveReasoning = document.getElementById('liveReasoning');
@@ -185,11 +186,12 @@ function saveLastRun(runConfig) {
 
 function setPresentationMode(enabled) {
   document.body.classList.toggle('presentation-mode', enabled);
+  advancedPanel.classList.toggle('hidden', !enabled);
   localStorage.setItem(PRESENTATION_KEY, String(enabled));
   presentationStatus.textContent = enabled
-    ? 'Modo presentacion activo: vista simplificada para demo.'
-    : 'Modo presentacion desactivado.';
-  presentationModeButton.textContent = enabled ? 'Desactivar modo presentacion' : 'Activar modo presentacion';
+    ? 'Detalles avanzados visibles.'
+    : 'Detalles avanzados ocultos.';
+  presentationModeButton.textContent = enabled ? 'Ocultar detalles avanzados' : 'Mostrar detalles avanzados';
 }
 
 function loadPresentationMode() {

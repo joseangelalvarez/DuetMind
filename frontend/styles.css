@@ -35,6 +35,14 @@ h1 { margin: 0; font-size: 2rem; }
 .card-span-2 {
   grid-column: span 2;
 }
+
+.advanced-panel.hidden {
+  display: none;
+}
+
+.advanced-panel {
+  margin-top: 8px;
+}
 .run-history {
   list-style: none;
   margin: 8px 0 0;
@@ -270,12 +278,13 @@ body.presentation-mode .copy-status {
   font-size: 1rem;
 }
 
-body.presentation-mode .phase-feed,
-body.presentation-mode .run-history,
-body.presentation-mode #etaText,
-body.presentation-mode #historyComparison,
-body.presentation-mode #executiveDashboard {
-  display: none;
+body.presentation-mode .advanced-panel.hidden {
+  display: block;
+}
+
+body.presentation-mode .advanced-panel > .card,
+body.presentation-mode .advanced-panel .card-span-2 {
+  display: block;
 }
 
 body.presentation-mode .grid {
