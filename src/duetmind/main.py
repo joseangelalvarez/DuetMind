@@ -10,6 +10,7 @@ from duetmind.packaging import PackagingPlatform, build_backend_packaging_plan, 
 from duetmind.pipeline import PipelineRunner
 from duetmind.orchestrator import Orchestrator
 from duetmind.server import serve_audit_api
+from duetmind.smoke import run_smoke_e2e
 from duetmind.storage import Storage
 
 
@@ -32,6 +33,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--export-bundle", type=str, default=None)
     parser.add_argument("--telemetry-summary", action="store_true")
     parser.add_argument("--go-no-go", action="store_true")
+    parser.add_argument("--smoke-e2e", action="store_true")
+    parser.add_argument("--smoke-base-url", type=str, default="http://127.0.0.1:8000")
+    parser.add_argument("--smoke-intent", type=str, default="Smoke E2E run")
     parser.add_argument("--export-distribution-manifest", type=str, default=None)
     parser.add_argument("--prepare-distribution", type=str, default=None)
     parser.add_argument("--export-backend-spec", type=str, default=None)
@@ -81,6 +85,15 @@ def main() -> None:
     if args.prepare_backend_packaging:
         staging_root = prepare_backend_packaging_staging(args.prepare_backend_packaging, packaging_plan)
         print(f"prepared_backend_packaging={staging_root}")
+        return
+
+    if args.smoke_e2e:
+        summary = run_smoke_e2e(
+            args.smoke_base_url,
+            intent=args.smoke_intent,
+            agent_mode=args.agent_mode,
+        )
+        print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
         return
 
     storage = Storage(args.db)

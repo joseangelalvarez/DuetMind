@@ -27,7 +27,7 @@ class RuntimeConfig:
     semantic_delta_threshold: float = 0.01
     token_budget_per_phase: int = 12000
     score_freeze_threshold: float = 7.5
-    score_converge_threshold: float = 6.0
+    score_converge_threshold: float = 4.5
 
 
 class Orchestrator:

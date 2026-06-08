@@ -19,6 +19,16 @@ python -m pip install -e .
 python -m duetmind.main --demo
 ```
 
+## Smoke automatizado E2E
+
+Con el servidor ya levantado (`--serve-http`), ejecuta:
+
+```powershell
+python -m duetmind.main --smoke-e2e --smoke-base-url http://127.0.0.1:8000 --agent-mode mock
+```
+
+Valida en una sola corrida: health, run-all, go-no-go y consistencia de bundle.
+
 Modo provider real con Ollama:
 
 ```powershell
@@ -86,6 +96,23 @@ python -m duetmind.main --prepare-backend-packaging backend-build
 ```
 
 Eso genera un `backend_core.spec` listo para PyInstaller y un staging con `backend-packaging-manifest.json` y script de build para la plataforma seleccionada.
+
+## UI web guiada (MVP no experto)
+
+Se incluye un scaffold en `frontend/` con narrativa de ejecucion paso a paso.
+
+```powershell
+cd frontend
+python -m http.server 5500
+```
+
+Abrir en navegador: `http://127.0.0.1:5500`.
+
+La UI permite:
+- verificar servidor,
+- ejecutar `run-all`,
+- mostrar decision y siguiente accion sugerida,
+- visualizar resumen de auditoria.
 
 HTTP export bundle:
 

@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 from duetmind.analysis import assess_go_no_go
 from duetmind.agents import build_default_agents, build_provider_agents
 from duetmind.orchestrator import Orchestrator
-from duetmind.pipeline import PhaseSpec, PipelineRunner
+from duetmind.pipeline import DEFAULT_PHASE_SCHEDULE, PhaseSpec, PipelineRunner
 from duetmind.storage import Storage
 
 
@@ -146,6 +146,18 @@ def build_audit_handler(storage: Storage, api_key: str | None = None) -> type[Ba
             if parsed.path == "/run-all":
                 intent = str(payload.get("intent", "Construir sistema multiagente hibrido con bajo costo operativo"))
                 schedule = _build_schedule(payload, str(agent_mode))
+                if schedule is None:
+                    schedule = [
+                        PhaseSpec(
+                            phase_id=phase.phase_id,
+                            name=phase.name,
+                            environment=phase.environment,
+                            max_iterations=phase.max_iterations,
+                            model_tier=phase.model_tier,
+                            agent_mode=str(agent_mode),
+                        )
+                        for phase in DEFAULT_PHASE_SCHEDULE
+                    ]
                 runner = PipelineRunner(orch, schedule=schedule)
                 result = runner.run(intent)
                 assessment = assess_go_no_go(storage.list_phase_results())

@@ -8,6 +8,7 @@ __all__ = [
     "semantic",
     "distribution",
     "packaging",
+    "smoke",
     "storage",
     "scoring",
     "moderator",

@@ -8,8 +8,6 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from duetmind.orchestrator import Orchestrator
-from duetmind.pipeline import PipelineRunner
 from duetmind.server import create_audit_server
 from duetmind.storage import Storage
 
@@ -19,9 +17,15 @@ class TestServer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"
             storage = Storage(db_path)
-            orch = Orchestrator(storage)
-            runner = PipelineRunner(orch)
-            runner.run("Construir sistema multiagente hibrido con bajo costo operativo")
+            storage.save_phase_result(
+                phase_id=1,
+                phase_name="Concepcion",
+                environment="local",
+                model_tier="test",
+                signal="CONVERGE_CONDICIONADO",
+                score=6.0,
+                reason="seed_for_http_tests",
+            )
 
             server = create_audit_server(storage, host="127.0.0.1", port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -98,7 +102,22 @@ class TestServer(unittest.TestCase):
 
                 run_all_request = Request(
                     f"http://127.0.0.1:{port}/run-all",
-                    data=json.dumps({"intent": "demo", "agent_mode": "mock"}).encode("utf-8"),
+                    data=json.dumps(
+                        {
+                            "intent": "demo",
+                            "agent_mode": "mock",
+                            "schedule": [
+                                {
+                                    "phase_id": 1,
+                                    "name": "SmokeOne",
+                                    "environment": "local",
+                                    "max_iterations": 1,
+                                    "model_tier": "test",
+                                    "agent_mode": "mock",
+                                }
+                            ],
+                        }
+                    ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
@@ -108,6 +127,7 @@ class TestServer(unittest.TestCase):
                 self.assertIn("phase_results", run_all)
                 self.assertIn("go_no_go", run_all)
                 self.assertIn(run_all["go_no_go"]["decision"], {"GO", "GO_CONDICIONAL", "NO_GO"})
+                self.assertTrue(all(item["agent_mode"] == "mock" for item in run_all["phase_results"]))
 
                 bundle_path = Path(tmp) / "audit.json"
                 export_bundle_request = Request(
@@ -137,7 +157,7 @@ class TestServer(unittest.TestCase):
                                     "environment": "local",
                                     "max_iterations": 1,
                                     "model_tier": "custom",
-                                    "agent_mode": "provider",
+                                    "agent_mode": "mock",
                                 }
                             ],
                         }
@@ -149,7 +169,7 @@ class TestServer(unittest.TestCase):
                     custom_run_all = json.loads(response.read().decode("utf-8"))
                 self.assertEqual(len(custom_run_all["phase_results"]), 1)
                 self.assertEqual(custom_run_all["phase_results"][0]["environment"], "local")
-                self.assertEqual(custom_run_all["phase_results"][0]["agent_mode"], "provider")
+                self.assertEqual(custom_run_all["phase_results"][0]["agent_mode"], "mock")
             finally:
                 server.shutdown()
                 server.server_close()

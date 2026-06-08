@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
@@ -49,6 +50,8 @@ class OllamaInferenceProvider:
         provider_name: str = "ollama",
         timeout_s: float = 45.0,
         fallback_suffix: str = "provider_unavailable",
+        max_retries: int = 3,
+        initial_backoff_s: float = 0.5,
         transport: TransportFn | None = None,
     ) -> None:
         self.model = model
@@ -56,6 +59,8 @@ class OllamaInferenceProvider:
         self.provider_name = provider_name
         self.timeout_s = timeout_s
         self.fallback_suffix = fallback_suffix
+        self.max_retries = max(1, max_retries)
+        self.initial_backoff_s = max(0.0, initial_backoff_s)
         self.transport = transport or _default_http_transport
 
     @staticmethod
@@ -100,16 +105,21 @@ class OllamaInferenceProvider:
             "options": {"temperature": 0.2},
         }
 
-        try:
-            data = self.transport(f"{self.base_url}/api/generate", payload, self.timeout_s)
-            raw_text = str(data.get("response", "")).strip()
-            if not raw_text:
-                return self._fallback_message(request)
-            return ProviderResponse(raw_text=raw_text, provider_name=self.provider_name)
-        except (URLError, TimeoutError, ValueError, KeyError):
-            return self._fallback_message(request)
-        except Exception:
-            return self._fallback_message(request)
+        for attempt in range(self.max_retries):
+            try:
+                data = self.transport(f"{self.base_url}/api/generate", payload, self.timeout_s)
+                raw_text = str(data.get("response", "")).strip()
+                if raw_text:
+                    return ProviderResponse(raw_text=raw_text, provider_name=self.provider_name)
+            except (URLError, TimeoutError, ValueError, KeyError):
+                pass
+            except Exception:
+                pass
+
+            if attempt < self.max_retries - 1 and self.initial_backoff_s > 0.0:
+                time.sleep(self.initial_backoff_s * (2**attempt))
+
+        return self._fallback_message(request)
 
 
 class StaticInferenceProvider:
