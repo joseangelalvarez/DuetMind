@@ -48,6 +48,11 @@ h1 { margin: 0; font-size: 2rem; }
   margin-bottom: 8px;
 }
 
+#historyComparison {
+  margin: 8px 0 12px;
+  background: #f7f2e7;
+}
+
 .trend-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -261,7 +266,8 @@ body.presentation-mode .copy-status {
 
 body.presentation-mode .phase-feed,
 body.presentation-mode .run-history,
-body.presentation-mode #etaText {
+body.presentation-mode #etaText,
+body.presentation-mode #historyComparison {
   display: none;
 }
 

@@ -24,6 +24,10 @@ const copyStatus = document.getElementById('copyStatus');
 const historyDecisionFilter = document.getElementById('historyDecisionFilter');
 const historyModeFilter = document.getElementById('historyModeFilter');
 const repeatLastRunButton = document.getElementById('btnRepeatLastRun');
+const exportFilteredHistoryTxtButton = document.getElementById('btnExportFilteredHistoryTxt');
+const exportFilteredHistoryJsonButton = document.getElementById('btnExportFilteredHistoryJson');
+const historyExportStatus = document.getElementById('historyExportStatus');
+const historyComparison = document.getElementById('historyComparison');
 const runHistory = document.getElementById('runHistory');
 const trendTotalRuns = document.getElementById('trendTotalRuns');
 const trendGoRate = document.getElementById('trendGoRate');
@@ -194,14 +198,8 @@ function saveHistory(entries) {
 }
 
 function renderRunHistory() {
+  const filtered = getFilteredHistoryEntries();
   const entries = safeLoadHistory();
-  const decisionFilter = historyDecisionFilter.value;
-  const modeFilter = historyModeFilter.value;
-  const filtered = entries.filter((entry) => {
-    const decisionMatches = decisionFilter === 'all' || entry.decision === decisionFilter;
-    const modeMatches = modeFilter === 'all' || entry.mode === modeFilter;
-    return decisionMatches && modeMatches;
-  });
   runHistory.innerHTML = '';
   if (filtered.length === 0) {
     const item = document.createElement('li');
@@ -209,6 +207,8 @@ function renderRunHistory() {
       ? 'Aun no hay corridas guardadas en este navegador.'
       : 'No hay corridas que coincidan con los filtros actuales.';
     runHistory.appendChild(item);
+    renderTrendMetrics(filtered);
+    renderHistoryComparison(filtered);
     return;
   }
 
@@ -220,6 +220,48 @@ function renderRunHistory() {
   }
 
   renderTrendMetrics(filtered);
+  renderHistoryComparison(filtered);
+}
+
+function getFilteredHistoryEntries() {
+  const entries = safeLoadHistory();
+  const decisionFilter = historyDecisionFilter.value;
+  const modeFilter = historyModeFilter.value;
+  return entries.filter((entry) => {
+    const decisionMatches = decisionFilter === 'all' || entry.decision === decisionFilter;
+    const modeMatches = modeFilter === 'all' || entry.mode === modeFilter;
+    return decisionMatches && modeMatches;
+  });
+}
+
+function renderHistoryComparison(filteredEntries) {
+  if (filteredEntries.length === 0) {
+    historyComparison.textContent = 'No hay corridas visibles para comparar.';
+    return;
+  }
+
+  const latest = filteredEntries[0];
+  const previous = filteredEntries[1] || null;
+  if (!previous) {
+    historyComparison.textContent = [
+      'Solo hay una corrida visible.',
+      `Ultima: ${latest.decision} | modo ${latest.mode} | senal ${latest.finalSignal} | fases ${latest.phases}/${TOTAL_PHASES} | score ${latest.averageScore}`,
+      'No hay una corrida anterior para comparar.',
+    ].join('\n');
+    return;
+  }
+
+  const latestScore = Number.parseFloat(latest.averageScore) || 0;
+  const previousScore = Number.parseFloat(previous.averageScore) || 0;
+  const scoreDelta = latestScore - previousScore;
+  const phaseDelta = Number(latest.phases || 0) - Number(previous.phases || 0);
+
+  historyComparison.textContent = [
+    'Comparacion de las dos ultimas corridas visibles',
+    `Ultima: ${latest.decision} | modo ${latest.mode} | senal ${latest.finalSignal} | fases ${latest.phases}/${TOTAL_PHASES} | score ${latest.averageScore}`,
+    `Anterior: ${previous.decision} | modo ${previous.mode} | senal ${previous.finalSignal} | fases ${previous.phases}/${TOTAL_PHASES} | score ${previous.averageScore}`,
+    `Diferencia: score ${scoreDelta >= 0 ? '+' : ''}${scoreDelta.toFixed(3)} | fases ${phaseDelta >= 0 ? '+' : ''}${phaseDelta}`,
+  ].join('\n');
 }
 
 function renderTrendMetrics(entries) {
@@ -259,6 +301,17 @@ function appendRunHistory(runConfig, runAll, goNoGo, bundle) {
   entries.unshift(next);
   saveHistory(entries.slice(0, MAX_HISTORY));
   renderRunHistory();
+}
+
+function serializeFilteredHistory(entries) {
+  return entries.map((entry) => ({
+    timestamp: new Date(entry.timestamp).toISOString(),
+    decision: entry.decision,
+    mode: entry.mode,
+    finalSignal: entry.finalSignal,
+    phases: entry.phases,
+    averageScore: entry.averageScore,
+  }));
 }
 
 function downloadFile(fileName, content, contentType) {
@@ -428,6 +481,43 @@ repeatLastRunButton.addEventListener('click', () => {
   intentInput.value = lastRun.intent || intentInput.value;
   agentMode.value = lastRun.mode || agentMode.value;
   copyStatus.textContent = 'Parametros de la ultima corrida cargados. Inicia run-all para repetirla.';
+});
+
+exportFilteredHistoryTxtButton.addEventListener('click', () => {
+  const entries = getFilteredHistoryEntries();
+  if (entries.length === 0) {
+    historyExportStatus.textContent = 'No hay historial filtrado para exportar.';
+    return;
+  }
+
+  const lines = [
+    'Historial filtrado DuetMind',
+    `Filtro decision: ${historyDecisionFilter.value}`,
+    `Filtro modo: ${historyModeFilter.value}`,
+    '',
+    ...entries.map((entry) => `${new Date(entry.timestamp).toLocaleString('es-ES')} | ${entry.decision} | modo ${entry.mode} | senal ${entry.finalSignal} | fases ${entry.phases}/${TOTAL_PHASES} | score ${entry.averageScore}`),
+  ];
+  downloadFile('duetmind-historial-filtrado.txt', lines.join('\n'), 'text/plain;charset=utf-8');
+  historyExportStatus.textContent = 'Historial filtrado exportado como TXT.';
+});
+
+exportFilteredHistoryJsonButton.addEventListener('click', () => {
+  const entries = getFilteredHistoryEntries();
+  if (entries.length === 0) {
+    historyExportStatus.textContent = 'No hay historial filtrado para exportar.';
+    return;
+  }
+
+  const payload = {
+    exported_at: new Date().toISOString(),
+    filters: {
+      decision: historyDecisionFilter.value,
+      mode: historyModeFilter.value,
+    },
+    entries: serializeFilteredHistory(entries),
+  };
+  downloadFile('duetmind-historial-filtrado.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+  historyExportStatus.textContent = 'Historial filtrado exportado como JSON.';
 });
 
 document.getElementById('btnRunAll').addEventListener('click', async () => {

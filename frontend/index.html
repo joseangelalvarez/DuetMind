@@ -122,6 +122,13 @@
           </select>
           <button id="btnRepeatLastRun" type="button">Repetir ultima corrida</button>
         </div>
+        <div class="row row-wrap">
+          <button id="btnExportFilteredHistoryTxt" type="button">Exportar historial TXT</button>
+          <button id="btnExportFilteredHistoryJson" type="button">Exportar historial JSON</button>
+        </div>
+        <p id="historyExportStatus" class="copy-status">Los exportes usan los filtros actuales.</p>
+        <h4>Comparacion de las dos ultimas corridas visibles</h4>
+        <pre id="historyComparison">-</pre>
         <ul id="runHistory" class="run-history"></ul>
       </article>
     </section>
